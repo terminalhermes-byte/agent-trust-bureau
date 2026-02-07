@@ -4,6 +4,7 @@ from pydantic import BaseModel, HttpUrl, Field
 from typing import List, Optional
 from datetime import datetime
 from src.database import get_db, ReputationEvent, Agent
+from src.svg_utils import generate_shield_svg
 import math
 
 router = APIRouter()
@@ -101,29 +102,29 @@ def get_score(agent_id: str, db: Session = Depends(get_db)):
         breakdown=agent.capabilities or {}
     )
 
-@router.get("/badge/{agent_id}.svg")
+@router.get("/badge/{agent_id}", response_class=Response)
 def get_badge(agent_id: str, db: Session = Depends(get_db)):
-    agent = db.query(Agent).filter(Agent.id == agent_id).first()
-    score = int(agent.trust_score) if agent else 0
-    color = "#e05d44" # red
-    if score >= 80: color = "#4c1" # bright green
-    elif score >= 50: color = "#dfb317" # yellow
+    # Note: agent_id in path might need double encoding or be passed as query param in real world.
+    # For this MVP, we assume the client encodes it properly.
     
-    # Minimal SVG template
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="100" height="20">
-    <linearGradient id="b" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
-    <mask id="a"><rect width="100" height="20" rx="3" fill="#fff"/></mask>
-    <g mask="url(#a)">
-        <path fill="#555" d="M0 0h60v20H0z"/>
-        <path fill="{color}" d="M60 0h40v20H60z"/>
-        <path fill="url(#b)" d="M0 0h100v20H0z"/>
-    </g>
-    <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans,Verdana,Geneva,sans-serif" font-size="11">
-        <text x="30" y="15" fill="#010101" fill-opacity=".3">trust</text>
-        <text x="30" y="14">trust</text>
-        <text x="80" y="15" fill="#010101" fill-opacity=".3">{score}%</text>
-        <text x="80" y="14">{score}%</text>
-    </g>
-    </svg>"""
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    
+    if not agent:
+        return Response(content=generate_shield_svg("trust", "unverified", "#9f9f9f"), media_type="image/svg+xml")
+    
+    score = int(agent.trust_score)
+    
+    # Color logic
+    color = "#e05d44" # red
+    if score >= 90: color = "#4c1" # bright green
+    elif score >= 80: color = "#97ca00" # green
+    elif score >= 60: color = "#dfb317" # yellow
+    
+    # Text logic
+    status_text = f"{score}%"
+    if agent.confidence == "low":
+        status_text += " (low conf)"
+    
+    svg = generate_shield_svg("trust", status_text, color)
     
     return Response(content=svg, media_type="image/svg+xml")

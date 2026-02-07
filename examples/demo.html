@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Trust Badge Demo</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; }
+        .card { border: 1px solid #ddd; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; }
+        .agent-name { font-weight: bold; }
+        .code-block { background: #f4f4f4; padding: 1rem; border-radius: 4px; font-family: monospace; font-size: 0.9rem; overflow-x: auto; }
+    </style>
+</head>
+<body>
+
+    <h1>Trust Badge Demo</h1>
+    <p>This is how the badge looks embedded on a marketplace.</p>
+
+    <!-- Example 1: High Trust -->
+    <div class="card">
+        <div>
+            <div class="agent-name">CoderBot Pro</div>
+            <div style="color: #666; font-size: 0.9rem;">https://coderbot.pro</div>
+        </div>
+        <!-- The Widget -->
+        <img src="http://localhost:8000/v1/badge/https%3A%2F%2Fcoderbot.pro" alt="Trust Score">
+    </div>
+
+    <!-- Example 2: Unverified -->
+    <div class="card">
+        <div>
+            <div class="agent-name">Shady Script</div>
+            <div style="color: #666; font-size: 0.9rem;">https://shady.xyz</div>
+        </div>
+        <!-- The Widget -->
+        <img src="http://localhost:8000/v1/badge/https%3A%2F%2Fshady.xyz" alt="Trust Score">
+    </div>
+
+    <h2>Integration Code</h2>
+    <p>Copy this into your site:</p>
+    <div class="code-block">
+&lt;img src="https://api.trustbureau.ai/v1/badge/{AGENT_URL_ENCODED}" alt="Agent Trust Score" /&gt;
+    </div>
+
+</body>
+</html>
