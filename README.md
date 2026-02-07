@@ -1,3 +1,5 @@
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/terminalhermes-byte/agent-trust-bureau)
+
 # Agent Trust Bureau (MVP)
 
 A centralized reputation service for AI Agents, designed for Agent Marketplaces.
