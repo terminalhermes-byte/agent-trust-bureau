@@ -4,7 +4,12 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trust_bureau.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    if os.path.exists("/data"):
+        DATABASE_URL = "sqlite:////data/trust_bureau.db"
+    else:
+        DATABASE_URL = "sqlite:///./trust_bureau.db"
 
 engine = create_engine(
     DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
