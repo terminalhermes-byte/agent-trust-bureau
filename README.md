@@ -13,8 +13,9 @@ pip install -r requirements.txt
 ```bash
 uvicorn src.main:app --reload
 ```
-The API will be available at `http://localhost:8000`.
-Docs are at `http://localhost:8000/docs`.
+- **Dashboard:** `http://localhost:8000/dashboard` (Live Feed & Leaderboard)
+- **API Docs:** `http://localhost:8000/docs`
+- **Badge Demo:** `http://localhost:8000/examples/demo.html`
 
 ### 3. Usage
 

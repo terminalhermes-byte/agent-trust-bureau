@@ -1,13 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, Header, Response
+from fastapi import APIRouter, Depends, HTTPException, Header, Response, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from sqlalchemy import func, desc
 from pydantic import BaseModel, HttpUrl, Field
 from typing import List, Optional
 from datetime import datetime
 from src.database import get_db, ReputationEvent, Agent
 from src.svg_utils import generate_shield_svg
 import math
+import os
 
 router = APIRouter()
+templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
 # --- Pydantic Models ---
 class EventIngest(BaseModel):
@@ -128,3 +133,41 @@ def get_badge(agent_id: str, db: Session = Depends(get_db)):
     svg = generate_shield_svg("trust", status_text, color)
     
     return Response(content=svg, media_type="image/svg+xml")
+
+# --- Dashboard & Stats ---
+
+@router.get("/dashboard", response_class=HTMLResponse)
+def get_dashboard(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+@router.get("/dashboard/stats")
+def get_dashboard_stats(db: Session = Depends(get_db)):
+    # 1. Basic Counts
+    total_events = db.query(ReputationEvent).count()
+    total_agents = db.query(Agent).count()
+    
+    # Avg Score (handle 0 agents)
+    avg_score = db.query(func.avg(Agent.trust_score)).scalar() or 0
+    
+    # 2. Recent Events (Last 10)
+    recent_events = db.query(ReputationEvent)\
+        .order_by(ReputationEvent.timestamp.desc())\
+        .limit(10)\
+        .all()
+        
+    # 3. Top Agents (Top 5 by score, where score > 0)
+    top_agents = db.query(Agent)\
+        .filter(Agent.trust_score > 0)\
+        .order_by(Agent.trust_score.desc())\
+        .limit(5)\
+        .all()
+    
+    return {
+        "stats": {
+            "total_events": total_events,
+            "total_agents": total_agents,
+            "avg_score": round(avg_score, 1)
+        },
+        "recent_events": recent_events,
+        "top_agents": top_agents
+    }
