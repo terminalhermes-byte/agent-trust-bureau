@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from contextlib import asynccontextmanager
 from src.api import router
 from src.database import init_db
@@ -18,6 +19,11 @@ app = FastAPI(
 )
 
 app.include_router(router, prefix="/v1")
+app.include_router(router, prefix="") # Include without prefix for /dashboard
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/dashboard")
 
 @app.get("/health")
 def health_check():
