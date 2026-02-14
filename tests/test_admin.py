@@ -427,3 +427,30 @@ def test_webhook_patch_tenant_isolation(admin_client: TestClient) -> None:
     # Verify it's still enabled for tenant A
     r3 = admin_client.get("/v1/admin/policy/webhooks", headers=_H1)
     assert r3.json()["webhooks"][0]["enabled"] is True
+
+
+def test_admin_endpoints_require_key_even_when_auth_disabled() -> None:
+    """Admin endpoints must always require a real API key, even in dev mode."""
+    engine, sf = _make_db()
+    _seed(sf)
+
+    def override_get_db():
+        db = sf()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    original = settings.require_auth
+    settings.require_auth = False  # dev mode
+    app.dependency_overrides[get_db] = override_get_db
+    reset_rate_limits()
+    try:
+        with TestClient(app) as c:
+            r = c.get("/v1/admin/policy/config")
+            assert r.status_code == 401
+    finally:
+        settings.require_auth = original
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(bind=engine)
+        reset_rate_limits()

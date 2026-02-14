@@ -19,7 +19,7 @@ from app.admin_store import (
     patch_webhook,
     upsert_policy_config,
 )
-from app.auth import AuthContext, require_api_key
+from app.auth import AuthContext, require_api_key_strict
 from app.db import get_db
 from app.schemas import (
     AgentOverrideCreate,
@@ -49,7 +49,7 @@ def _secret_last4(secret: str) -> str:
 
 @router.get("/policy/config", response_model=PolicyConfigOut)
 def get_config(
-    auth: AuthContext = Depends(require_api_key),
+    auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> PolicyConfigOut:
     cfg = get_policy_config(db, auth.tenant_id)
@@ -67,7 +67,7 @@ def get_config(
 @router.put("/policy/config", response_model=PolicyConfigOut)
 def update_config(
     body: PolicyConfigUpdate,
-    auth: AuthContext = Depends(require_api_key),
+    auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> PolicyConfigOut:
     cfg = upsert_policy_config(
@@ -93,7 +93,7 @@ def update_config(
 @router.post("/policy/overrides", response_model=AgentOverrideOut, status_code=status.HTTP_201_CREATED)
 def create_override(
     body: AgentOverrideCreate,
-    auth: AuthContext = Depends(require_api_key),
+    auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> AgentOverrideOut:
     try:
@@ -124,7 +124,7 @@ def create_override(
 @router.delete("/policy/overrides/{agent_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def remove_override(
     agent_id: str,
-    auth: AuthContext = Depends(require_api_key),
+    auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> None:
     deleted = delete_agent_override(db, auth.tenant_id, agent_id)
@@ -138,7 +138,7 @@ def remove_override(
 @router.get("/policy/overrides", response_model=AgentOverrideListResponse)
 def get_overrides(
     limit: int = Query(default=50, ge=1, le=500),
-    auth: AuthContext = Depends(require_api_key),
+    auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> AgentOverrideListResponse:
     overrides = list_agent_overrides(db, auth.tenant_id, limit=limit)
@@ -163,7 +163,7 @@ def get_overrides(
 @router.post("/policy/webhooks", response_model=WebhookOut, status_code=status.HTTP_201_CREATED)
 def add_webhook(
     body: WebhookCreate,
-    auth: AuthContext = Depends(require_api_key),
+    auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> WebhookOut:
     try:
@@ -188,7 +188,7 @@ def add_webhook(
 def update_webhook(
     webhook_id: int,
     body: WebhookPatch,
-    auth: AuthContext = Depends(require_api_key),
+    auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> WebhookOut:
     wh = patch_webhook(
@@ -212,7 +212,7 @@ def update_webhook(
 
 @router.get("/policy/webhooks", response_model=WebhookListResponse)
 def get_webhooks(
-    auth: AuthContext = Depends(require_api_key),
+    auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> WebhookListResponse:
     webhooks = list_webhooks(db, auth.tenant_id)
