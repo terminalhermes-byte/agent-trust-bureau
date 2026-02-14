@@ -192,18 +192,17 @@ curl -X DELETE -H "X-API-Key: $KEY" \
 
 ### Webhooks
 
-Webhook secrets are **generated server-side** and returned exactly once on creation (or rotation). Store the secret securely — it cannot be retrieved again. The list and get endpoints only show the last 4 characters.
+Webhook secrets are provided by the caller and are never returned in full by the API. Responses only include masked `secret_last4`.
 
 ```bash
-# Create webhook (secret is generated server-side and returned once)
+# Create webhook (secret never returned in full)
 curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"url": "https://hooks.example.com/policy"}' \
+  -d '{"url": "https://hooks.example.com/policy", "secret": "your-secret-value"}' \
   http://127.0.0.1:8010/v1/admin/policy/webhooks
-# Response includes "secret": "<full-secret>" — save it now!
 
-# Rotate secret (generates a new secret, returns it once)
+# Rotate secret (provide the new secret)
 curl -X PATCH -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"rotate_secret": true}' \
+  -d '{"rotate_secret": "your-new-secret-value"}' \
   http://127.0.0.1:8010/v1/admin/policy/webhooks/1
 
 # Disable/enable
