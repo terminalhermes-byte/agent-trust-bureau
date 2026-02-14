@@ -1,47 +1,37 @@
-"""
-Pytest fixtures for Agent Trust Bureau tests.
-"""
+from __future__ import annotations
+
 import pytest
-import os
-
-# Set test environment BEFORE any imports
-os.environ["ATB_API_KEYS"] = "test-key-valid,another-valid-key"
-os.environ["DATABASE_URL"] = "sqlite:///./test_trust_bureau.db"
-
-# Remove any existing test db
-if os.path.exists("./test_trust_bureau.db"):
-    os.remove("./test_trust_bureau.db")
-
 from fastapi.testclient import TestClient
-from src.main import app
-from src.database import Base, engine, init_db
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.db import get_db
+from app.main import app
+from app.models import Base
 
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_db():
-    """Create test database once for all tests."""
-    # Create all tables
+@pytest.fixture
+def client() -> TestClient:
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    testing_session = sessionmaker(bind=engine, autocommit=False, autoflush=False, class_=Session)
     Base.metadata.create_all(bind=engine)
-    yield
-    # Cleanup after all tests
-    Base.metadata.drop_all(bind=engine)
-    if os.path.exists("./test_trust_bureau.db"):
-        os.remove("./test_trust_bureau.db")
 
+    def override_get_db():
+        db = testing_session()
+        try:
+            yield db
+        finally:
+            db.close()
 
-@pytest.fixture(scope="function")
-def client():
-    """Test client for each test."""
-    return TestClient(app)
-
-
-@pytest.fixture
-def valid_api_key():
-    """Return a valid API key for testing."""
-    return "test-key-valid"
-
-
-@pytest.fixture
-def invalid_api_key():
-    """Return an invalid API key for testing."""
-    return "invalid-key-12345"
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(bind=engine)

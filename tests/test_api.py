@@ -1,206 +1,151 @@
-"""
-Integration tests for Agent Trust Bureau API.
-"""
-import pytest
-import time
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
 
 
-class TestEventsEndpoint:
-    """Tests for POST /events endpoint."""
-    
-    def test_ingest_events_success(self, client, valid_api_key):
-        """Successfully ingest events with valid API key."""
-        events = [
-            {
-                "rater_id": "marketplace_1",
-                "subject_id": "https://agent.example.com",
-                "capability": "python-scripting",
-                "outcome": 1,
-                "cost_usd": 0.05
+def test_ingest_and_fetch_events(client: TestClient) -> None:
+    payload = {
+        "event_id": "evt-001",
+        "agent_id": "agent-123",
+        "event_type": "safe_tool_usage",
+        "source": "test-suite",
+        "occurred_at": "2026-02-13T12:00:00Z",
+        "metadata": {"tool": "search"},
+    }
+
+    ingest_response = client.post("/v1/intake/events", json=payload)
+    assert ingest_response.status_code == 200
+    assert ingest_response.json() == {"accepted": True, "event_id": "evt-001", "agent_id": "agent-123"}
+
+    fetch_response = client.get("/v1/intake/events/agent-123")
+    assert fetch_response.status_code == 200
+
+    body = fetch_response.json()
+    assert body["agent_id"] == "agent-123"
+    assert body["event_count"] == 1
+    assert body["events"][0]["event_id"] == "evt-001"
+    assert body["events"][0]["metadata"] == {"tool": "search"}
+
+
+def test_duplicate_event_id_returns_409(client: TestClient) -> None:
+    payload = {
+        "event_id": "evt-dup",
+        "agent_id": "agent-123",
+        "event_type": "safe_tool_usage",
+        "source": "test-suite",
+        "occurred_at": "2026-02-13T12:05:00Z",
+        "metadata": {},
+    }
+
+    first = client.post("/v1/intake/events", json=payload)
+    assert first.status_code == 200
+
+    second = client.post("/v1/intake/events", json=payload)
+    assert second.status_code == 409
+    assert "already exists" in second.json()["detail"]
+
+
+def test_trust_score_aggregates_saved_events(client: TestClient) -> None:
+    client.post(
+        "/v1/intake/events",
+        json={
+            "event_id": "evt-positive",
+            "agent_id": "agent-score",
+            "event_type": "human_approved_action",
+            "source": "test-suite",
+            "occurred_at": "2026-02-13T12:10:00Z",
+            "metadata": {},
+        },
+    )
+    client.post(
+        "/v1/intake/events",
+        json={
+            "event_id": "evt-negative",
+            "agent_id": "agent-score",
+            "event_type": "hallucination_detected",
+            "source": "test-suite",
+            "occurred_at": "2026-02-13T12:11:00Z",
+            "metadata": {},
+        },
+    )
+
+    score_response = client.get("/v1/trust/score/agent-score")
+    assert score_response.status_code == 200
+
+    body = score_response.json()
+    assert body["agent_id"] == "agent-score"
+    assert body["trust_score"] == 48.0
+    assert body["trust_tier"] == "watch"
+    assert body["factors"]["positive_delta"] == 6.0
+    assert body["factors"]["negative_delta"] == -8.0
+
+
+def test_trust_score_for_unknown_agent_returns_baseline(client: TestClient) -> None:
+    """An agent with no events should get the baseline score (50.0, watch)."""
+    response = client.get("/v1/trust/score/agent-never-seen")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["agent_id"] == "agent-never-seen"
+    assert body["trust_score"] == 50.0
+    assert body["trust_tier"] == "watch"
+    assert body["factors"]["positive_delta"] == 0.0
+    assert body["factors"]["negative_delta"] == 0.0
+
+
+def test_score_endpoint_persists_snapshot(client: TestClient) -> None:
+    """Calling the score endpoint should write a row to score_history."""
+    from app.models import ScoreSnapshot
+
+    client.post(
+        "/v1/intake/events",
+        json={
+            "event_id": "evt-persist-1",
+            "agent_id": "agent-persist",
+            "event_type": "safe_tool_usage",
+            "source": "test-suite",
+            "occurred_at": "2026-02-13T12:20:00Z",
+            "metadata": {},
+        },
+    )
+
+    response = client.get("/v1/trust/score/agent-persist")
+    assert response.status_code == 200
+
+    # Verify snapshot was written to DB via a direct DB query
+    from sqlalchemy import select
+    from app.db import get_db
+    from app.main import app
+
+    db_gen = app.dependency_overrides[get_db]()
+    db = next(db_gen)
+    try:
+        snapshots = list(db.scalars(select(ScoreSnapshot).where(ScoreSnapshot.agent_id == "agent-persist")).all())
+        assert len(snapshots) == 1
+        assert snapshots[0].score == 52.0  # baseline 50 + safe_tool_usage 2
+        assert snapshots[0].tier == "watch"
+    finally:
+        db.close()
+
+
+def test_negative_heavy_agent_via_api(client: TestClient) -> None:
+    """End-to-end: ingest several severe negatives, verify restricted tier via API."""
+    for i, event_type in enumerate(["policy_violation", "sensitive_data_leak_attempt", "unsafe_tool_call"]):
+        client.post(
+            "/v1/intake/events",
+            json={
+                "event_id": f"evt-neg-{i}",
+                "agent_id": "agent-bad-actor",
+                "event_type": event_type,
+                "source": "test-suite",
+                "occurred_at": f"2026-02-13T13:0{i}:00Z",
+                "metadata": {},
             },
-            {
-                "rater_id": "marketplace_1",
-                "subject_id": "https://agent.example.com",
-                "capability": "python-scripting",
-                "outcome": 1,
-                "cost_usd": 0.03
-            }
-        ]
-        
-        response = client.post(
-            "/v1/events",
-            json=events,
-            headers={"X-API-Key": valid_api_key}
         )
-        
-        assert response.status_code == 201
-        data = response.json()
-        assert data["message"] == "Ingested 2 events"
-        assert "https://agent.example.com" in data["agents_affected"]
-        assert data["scores_updating"] is True
-    
-    def test_ingest_events_missing_api_key(self, client):
-        """Reject events without API key."""
-        events = [
-            {
-                "rater_id": "marketplace_1",
-                "subject_id": "https://agent.example.com",
-                "capability": "python-scripting",
-                "outcome": 1
-            }
-        ]
-        
-        response = client.post("/v1/events", json=events)
-        
-        assert response.status_code == 401
-        assert "Missing API key" in response.json()["detail"]
-    
-    def test_ingest_events_invalid_api_key(self, client, invalid_api_key):
-        """Reject events with invalid API key."""
-        events = [
-            {
-                "rater_id": "marketplace_1",
-                "subject_id": "https://agent.example.com",
-                "capability": "python-scripting",
-                "outcome": 1
-            }
-        ]
-        
-        response = client.post(
-            "/v1/events",
-            json=events,
-            headers={"X-API-Key": invalid_api_key}
-        )
-        
-        assert response.status_code == 403
-        assert "Invalid API key" in response.json()["detail"]
-    
-    def test_ingest_events_validation_error(self, client, valid_api_key):
-        """Reject events with invalid data."""
-        events = [
-            {
-                "rater_id": "marketplace_1",
-                "subject_id": "https://agent.example.com",
-                "capability": "python-scripting",
-                "outcome": 5  # Invalid: must be 0 or 1
-            }
-        ]
-        
-        response = client.post(
-            "/v1/events",
-            json=events,
-            headers={"X-API-Key": valid_api_key}
-        )
-        
-        assert response.status_code == 422  # Validation error
-    
-    def test_ingest_empty_events(self, client, valid_api_key):
-        """Handle empty events list."""
-        response = client.post(
-            "/v1/events",
-            json=[],
-            headers={"X-API-Key": valid_api_key}
-        )
-        
-        assert response.status_code == 201
-        assert response.json()["message"] == "Ingested 0 events"
 
+    response = client.get("/v1/trust/score/agent-bad-actor")
+    assert response.status_code == 200
 
-class TestScoresEndpoint:
-    """Tests for GET /scores/{agent_id} endpoint."""
-    
-    def test_get_score_not_found(self, client):
-        """Return zero score for unknown agent."""
-        response = client.get("/v1/scores/unknown-agent-12345")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["trust_score"] == 0.0
-        assert data["confidence"] == "none"
-    
-    def test_get_score_after_events(self, client, valid_api_key):
-        """Return calculated score after events ingestion."""
-        # First, ingest some events
-        events = [
-            {"rater_id": "m1", "subject_id": "agent-1", "capability": "coding", "outcome": 1},
-            {"rater_id": "m1", "subject_id": "agent-1", "capability": "coding", "outcome": 1},
-            {"rater_id": "m1", "subject_id": "agent-1", "capability": "coding", "outcome": 1},
-            {"rater_id": "m1", "subject_id": "agent-1", "capability": "coding", "outcome": 0},
-        ]
-        
-        client.post("/v1/events", json=events, headers={"X-API-Key": valid_api_key})
-        
-        # Wait a moment for background task
-        time.sleep(0.5)
-        
-        # Check score
-        response = client.get("/v1/scores/agent-1")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["agent_id"] == "agent-1"
-        assert data["trust_score"] > 0
-        assert data["confidence"] == "low"  # Only 4 events
-
-
-class TestBadgeEndpoint:
-    """Tests for GET /badge/{agent_id} endpoint."""
-    
-    def test_get_badge_unverified(self, client):
-        """Return unverified badge for unknown agent."""
-        response = client.get("/v1/badge/unknown-agent")
-        
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "image/svg+xml"
-        assert b"unverified" in response.content
-    
-    def test_get_badge_with_score(self, client, valid_api_key):
-        """Return score badge after events."""
-        # Ingest events for high score
-        events = [
-            {"rater_id": "m1", "subject_id": "good-agent", "capability": "c", "outcome": 1}
-            for _ in range(20)
-        ]
-        
-        client.post("/v1/events", json=events, headers={"X-API-Key": valid_api_key})
-        time.sleep(0.5)
-        
-        response = client.get("/v1/badge/good-agent")
-        
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "image/svg+xml"
-        assert b"%" in response.content  # Should contain percentage
-
-
-class TestDashboard:
-    """Tests for dashboard endpoints."""
-    
-    def test_dashboard_html(self, client):
-        """Dashboard returns HTML."""
-        response = client.get("/dashboard")
-        
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-    
-    def test_dashboard_stats(self, client):
-        """Dashboard stats returns JSON."""
-        response = client.get("/dashboard/stats")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "stats" in data
-        assert "total_events" in data["stats"]
-        assert "total_agents" in data["stats"]
-
-
-class TestHealthCheck:
-    """Tests for health endpoint."""
-    
-    def test_health_check(self, client):
-        """Health check returns ok."""
-        response = client.get("/health")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-        assert data["service"] == "Agent Trust Bureau"
+    body = response.json()
+    assert body["trust_score"] == 0.0
+    assert body["trust_tier"] == "restricted"
