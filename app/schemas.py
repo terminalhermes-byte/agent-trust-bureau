@@ -136,12 +136,11 @@ class AgentOverrideListResponse(BaseModel):
 
 class WebhookCreate(BaseModel):
     url: str = Field(..., min_length=1)
-    secret: str = Field(..., min_length=8)
 
 
 class WebhookPatch(BaseModel):
     enabled: Optional[bool] = None
-    rotate_secret: Optional[str] = Field(None, min_length=8)
+    rotate_secret: Optional[bool] = None
 
 
 class WebhookOut(BaseModel):
@@ -152,6 +151,16 @@ class WebhookOut(BaseModel):
     revoked_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+
+class WebhookCreatedOut(WebhookOut):
+    """Returned only on creation — includes the full secret exactly once."""
+    secret: str
+
+
+class WebhookRotatedOut(WebhookOut):
+    """Returned when rotate_secret=true — includes the new secret exactly once."""
+    secret: Optional[str] = None
 
 
 class WebhookListResponse(BaseModel):

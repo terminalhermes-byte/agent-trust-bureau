@@ -2,9 +2,11 @@
 
 All endpoints are tenant-scoped via AuthContext and protected by API key auth
 (even when REQUIRE_AUTH is false — admin always requires a key).
-Secrets are never returned in full — only the last 4 characters are exposed.
+Secrets are generated server-side and shown exactly once on creation/rotation.
 """
 from __future__ import annotations
+
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
@@ -29,10 +31,16 @@ from app.schemas import (
     PolicyConfigOut,
     PolicyConfigUpdate,
     WebhookCreate,
+    WebhookCreatedOut,
     WebhookListResponse,
     WebhookOut,
     WebhookPatch,
+    WebhookRotatedOut,
 )
+
+def _generate_webhook_secret() -> str:
+    """Generate a 32-byte URL-safe random secret for webhook HMAC signing."""
+    return secrets.token_urlsafe(32)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -161,24 +169,26 @@ def get_overrides(
 # Webhooks: POST / PATCH / GET (list)
 # ---------------------------------------------------------------------------
 
-@router.post("/policy/webhooks", response_model=WebhookOut, status_code=status.HTTP_201_CREATED)
+@router.post("/policy/webhooks", response_model=WebhookCreatedOut, status_code=status.HTTP_201_CREATED)
 def add_webhook(
     body: WebhookCreate,
     auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
-) -> WebhookOut:
+) -> WebhookCreatedOut:
+    raw_secret = _generate_webhook_secret()
     try:
-        wh = create_webhook(db, auth.tenant_id, url=body.url, secret=body.secret)
+        wh = create_webhook(db, auth.tenant_id, url=body.url, secret=raw_secret)
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Webhook already exists for this tenant",
         ) from exc
-    return WebhookOut(
+    return WebhookCreatedOut(
         id=wh.id,
         url=wh.url,
-        secret_last4=_secret_last4(wh.secret),
+        secret=raw_secret,
+        secret_last4=_secret_last4(raw_secret),
         enabled=wh.enabled,
         revoked_at=wh.revoked_at,
         created_at=wh.created_at,
@@ -186,25 +196,32 @@ def add_webhook(
     )
 
 
-@router.patch("/policy/webhooks/{webhook_id}", response_model=WebhookOut)
+@router.patch("/policy/webhooks/{webhook_id}", response_model=WebhookRotatedOut)
 def update_webhook(
     webhook_id: int,
     body: WebhookPatch,
     auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
-) -> WebhookOut:
+) -> WebhookRotatedOut:
+    new_secret: str | None = None
+    rotate_value: str | None = None
+    if body.rotate_secret:
+        new_secret = _generate_webhook_secret()
+        rotate_value = new_secret
+
     wh = patch_webhook(
         db,
         webhook_id,
         auth.tenant_id,
         enabled=body.enabled,
-        rotate_secret=body.rotate_secret,
+        rotate_secret=rotate_value,
     )
     if wh is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
-    return WebhookOut(
+    return WebhookRotatedOut(
         id=wh.id,
         url=wh.url,
+        secret=new_secret,
         secret_last4=_secret_last4(wh.secret),
         enabled=wh.enabled,
         revoked_at=wh.revoked_at,

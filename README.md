@@ -192,18 +192,26 @@ curl -X DELETE -H "X-API-Key: $KEY" \
 
 ### Webhooks
 
-```bash
-# Create webhook (secret must be >= 8 chars)
-curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"url": "https://hooks.example.com/policy", "secret": "my-webhook-secret"}' \
-  http://127.0.0.1:8010/v1/admin/policy/webhooks
+Webhook secrets are **generated server-side** and returned exactly once on creation (or rotation). Store the secret securely — it cannot be retrieved again. The list and get endpoints only show the last 4 characters.
 
-# Disable/enable or rotate secret
+```bash
+# Create webhook (secret is generated server-side and returned once)
+curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"url": "https://hooks.example.com/policy"}' \
+  http://127.0.0.1:8010/v1/admin/policy/webhooks
+# Response includes "secret": "<full-secret>" — save it now!
+
+# Rotate secret (generates a new secret, returns it once)
+curl -X PATCH -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"rotate_secret": true}' \
+  http://127.0.0.1:8010/v1/admin/policy/webhooks/1
+
+# Disable/enable
 curl -X PATCH -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"enabled": false}' \
   http://127.0.0.1:8010/v1/admin/policy/webhooks/1
 
-# List webhooks
+# List webhooks (secrets masked — only last 4 chars shown)
 curl -H "X-API-Key: $KEY" http://127.0.0.1:8010/v1/admin/policy/webhooks
 ```
 
@@ -293,7 +301,7 @@ app/
 scripts/
   start.sh             # Startup script (migrate + uvicorn)
 alembic/               # Migration config and versions
-tests/                 # pytest suite (80 tests)
+tests/                 # pytest suite (83 tests)
 .github/workflows/
   ci.yml               # GitHub Actions CI (Postgres, migrations, pytest)
 Dockerfile             # Production container image
@@ -355,6 +363,29 @@ GitHub Actions runs on every push and pull request:
 - Runs the full pytest suite
 
 See `.github/workflows/ci.yml`.
+
+### Running CI locally
+
+Tests use in-memory SQLite, so no Postgres is needed locally:
+
+```bash
+make test                    # or: .venv/bin/python -m pytest -v
+```
+
+To replicate the full CI pipeline locally (with Postgres):
+
+```bash
+# Start Postgres (e.g. via Docker)
+docker run -d --name atb-pg -p 5432:5432 \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=agent_trust_bureau_test postgres:16-alpine
+
+# Run migrations + tests against Postgres
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/agent_trust_bureau_test \
+  alembic upgrade head
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/agent_trust_bureau_test \
+  python -m pytest -v
+```
 
 ## Scoring Model
 

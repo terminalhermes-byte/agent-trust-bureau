@@ -284,15 +284,14 @@ def test_agent_override_delete_tenant_isolation(admin_client: TestClient) -> Non
 
 
 # ==========================================================================
-# Webhooks
+# Webhooks (server-side secret generation)
 # ==========================================================================
 
-def test_create_webhook(admin_client: TestClient) -> None:
-    """POST creates webhook; secret is provided by the caller and never returned in full."""
-    secret = "my-secret-key-1234"
+def test_create_webhook_generates_secret(admin_client: TestClient) -> None:
+    """POST creates webhook; secret is generated server-side and returned once."""
     r = admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://hooks.example.com/test", "secret": secret},
+        json={"url": "https://hooks.example.com/test"},
         headers=_H1,
     )
     assert r.status_code == 201
@@ -300,55 +299,48 @@ def test_create_webhook(admin_client: TestClient) -> None:
     assert data["url"] == "https://hooks.example.com/test"
     assert data["enabled"] is True
     assert "id" in data
-    assert "secret" not in data
-    assert data["secret_last4"] == "***" + secret[-4:]
-    assert data["revoked_at"] is None
+    # Server-side secret is returned on creation
+    assert "secret" in data
+    assert len(data["secret"]) > 20  # token_urlsafe(32) is ~43 chars
+    assert data["secret_last4"] == "***" + data["secret"][-4:]
 
 
 def test_create_webhook_secret_not_in_list(admin_client: TestClient) -> None:
     """Full secret must not appear in the list response."""
-    secret = "super-secret-value-9999"
     create_r = admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://example.com/hook", "secret": secret},
+        json={"url": "https://example.com/hook"},
         headers=_H1,
     )
     assert create_r.status_code == 201
+    full_secret = create_r.json()["secret"]
 
     list_r = admin_client.get("/v1/admin/policy/webhooks", headers=_H1)
     assert list_r.status_code == 200
     body_text = list_r.text
-    assert secret not in body_text
-    assert ("***" + secret[-4:]) in body_text
+    assert full_secret not in body_text
+    # Only last4 with mask
+    assert "***" in body_text
 
 
 def test_create_webhook_duplicate_409(admin_client: TestClient) -> None:
     admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://a.com/1", "secret": "secret-1234"},
+        json={"url": "https://a.com/1"},
         headers=_H1,
     )
     r = admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://a.com/2", "secret": "secret-5678"},
+        json={"url": "https://a.com/2"},
         headers=_H1,
     )
     assert r.status_code == 409
 
 
-def test_create_webhook_secret_too_short(admin_client: TestClient) -> None:
-    r = admin_client.post(
-        "/v1/admin/policy/webhooks",
-        json={"url": "https://hooks.example.com", "secret": "short"},
-        headers=_H1,
-    )
-    assert r.status_code == 422
-
-
 def test_patch_webhook_disable(admin_client: TestClient) -> None:
     r1 = admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://hooks.example.com", "secret": "my-secret-1234"},
+        json={"url": "https://hooks.example.com"},
         headers=_H1,
     )
     wh_id = r1.json()["id"]
@@ -364,30 +356,34 @@ def test_patch_webhook_disable(admin_client: TestClient) -> None:
 
 
 def test_patch_webhook_rotate_secret(admin_client: TestClient) -> None:
-    """rotate_secret updates the stored secret without returning it."""
+    """rotate_secret=true generates a new secret and returns it once."""
     r1 = admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://hooks.example.com", "secret": "old-secret-1234"},
+        json={"url": "https://hooks.example.com"},
         headers=_H1,
     )
     wh_id = r1.json()["id"]
+    original_secret = r1.json()["secret"]
 
     r2 = admin_client.patch(
         f"/v1/admin/policy/webhooks/{wh_id}",
-        json={"rotate_secret": "new-secret-5678"},
+        json={"rotate_secret": True},
         headers=_H1,
     )
     assert r2.status_code == 200
     data = r2.json()
-    assert "secret" not in data
-    assert data["secret_last4"] == "***5678"
+    # New secret is returned
+    assert "secret" in data
+    assert data["secret"] is not None
+    assert data["secret"] != original_secret
+    assert data["secret_last4"] == "***" + data["secret"][-4:]
 
 
 def test_patch_webhook_no_rotation_does_not_expose_secret(admin_client: TestClient) -> None:
-    """PATCH without rotate_secret does not expose the secret."""
+    """PATCH without rotate_secret does not include the secret in response."""
     r1 = admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://hooks.example.com", "secret": "my-secret-1234"},
+        json={"url": "https://hooks.example.com"},
         headers=_H1,
     )
     wh_id = r1.json()["id"]
@@ -398,7 +394,7 @@ def test_patch_webhook_no_rotation_does_not_expose_secret(admin_client: TestClie
         headers=_H1,
     )
     assert r2.status_code == 200
-    assert "secret" not in r2.json()
+    assert r2.json()["secret"] is None
 
 
 def test_patch_webhook_not_found(admin_client: TestClient) -> None:
@@ -413,7 +409,7 @@ def test_patch_webhook_not_found(admin_client: TestClient) -> None:
 def test_list_webhooks(admin_client: TestClient) -> None:
     admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://hooks.example.com", "secret": "secret-1234"},
+        json={"url": "https://hooks.example.com"},
         headers=_H1,
     )
     r = admin_client.get("/v1/admin/policy/webhooks", headers=_H1)
@@ -422,8 +418,6 @@ def test_list_webhooks(admin_client: TestClient) -> None:
     assert data["count"] == 1
     assert data["webhooks"][0]["url"] == "https://hooks.example.com"
     assert data["webhooks"][0]["secret_last4"].startswith("***")
-    # Full secret not in list response
-    assert "secret" not in data["webhooks"][0] or data["webhooks"][0].get("secret") is None
 
 
 def test_list_webhooks_empty(admin_client: TestClient) -> None:
@@ -436,7 +430,7 @@ def test_webhook_tenant_isolation(admin_client: TestClient) -> None:
     """Tenant A's webhook is not visible to tenant B."""
     admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://a.com/hook", "secret": "secret-aaaa"},
+        json={"url": "https://a.com/hook"},
         headers=_H1,
     )
     r = admin_client.get("/v1/admin/policy/webhooks", headers=_H2)
@@ -448,7 +442,7 @@ def test_webhook_patch_tenant_isolation(admin_client: TestClient) -> None:
     """Tenant B cannot patch tenant A's webhook."""
     r1 = admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://a.com/hook", "secret": "secret-aaaa"},
+        json={"url": "https://a.com/hook"},
         headers=_H1,
     )
     wh_id = r1.json()["id"]
@@ -471,24 +465,24 @@ def test_webhook_patch_tenant_isolation(admin_client: TestClient) -> None:
 
 def test_rotate_secret_changes_signature(admin_client: TestClient) -> None:
     """After rotating the webhook secret, HMAC signatures differ for the same payload."""
-    # Create webhook with a known secret so we can validate signatures.
-    original_secret = "secret-old-1234"
+    # Create webhook and capture original secret
     r1 = admin_client.post(
         "/v1/admin/policy/webhooks",
-        json={"url": "https://hooks.example.com", "secret": original_secret},
+        json={"url": "https://hooks.example.com"},
         headers=_H1,
     )
     assert r1.status_code == 201
+    original_secret = r1.json()["secret"]
     wh_id = r1.json()["id"]
 
     # Rotate secret
-    new_secret = "secret-new-5678"
     r2 = admin_client.patch(
         f"/v1/admin/policy/webhooks/{wh_id}",
-        json={"rotate_secret": new_secret},
+        json={"rotate_secret": True},
         headers=_H1,
     )
     assert r2.status_code == 200
+    new_secret = r2.json()["secret"]
     assert new_secret != original_secret
 
     # Same payload, different signatures
