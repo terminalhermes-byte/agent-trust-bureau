@@ -268,6 +268,8 @@ Returns `429 Too Many Requests` when exceeded. Set to `0` to disable.
 | POST | `/v1/admin/policy/webhooks` | Create webhook |
 | PATCH | `/v1/admin/policy/webhooks/{id}` | Update webhook (enable/disable, rotate secret) |
 | GET | `/v1/admin/policy/webhooks` | List webhooks |
+| GET | `/v1/admin/policy/webhooks/{id}/deliveries` | Delivery attempt log (`?limit=`) |
+| GET | `/v1/admin/policy/webhooks/{id}/jobs` | Async job queue (`?state=&limit=`) |
 
 ## Environment Variables
 
@@ -280,6 +282,8 @@ Returns `429 Too Many Requests` when exceeded. Set to `0` to disable.
 | `DB_ECHO` | `false` | Log SQL statements |
 | `AUTO_CREATE_TABLES` | `false` | Create tables on startup (use migrations instead) |
 | `PORT` | `8010` | Port for uvicorn (used by Docker / deploy scripts) |
+| `WEBHOOK_ASYNC` | `false` | Use DB-backed job queue for webhook delivery; `true` for production |
+| `WEBHOOK_WORKER_POLL_SECONDS` | `2` | Worker poll interval in seconds |
 
 ## Database Tables
 
@@ -292,6 +296,8 @@ Returns `429 Too Many Requests` when exceeded. Set to `0` to disable.
 | **policy_configs** | Per-tenant policy thresholds (allow, review, block) |
 | **agent_policy_overrides** | Optional per-agent threshold overrides |
 | **policy_webhooks** | Optional webhook URLs with HMAC secrets |
+| **webhook_deliveries** | Audit log of every delivery attempt (status, error, attempt #) |
+| **webhook_jobs** | Async delivery queue (state machine: pending→in_progress→completed/dead) |
 
 Migrations are managed with Alembic. After model changes:
 
@@ -310,7 +316,7 @@ app/
   rate_limit.py        # Per-agent sliding window rate limiter
   cli.py               # Bootstrap CLI (create tenant, generate keys)
   db.py                # Engine, session, init_db
-  models.py            # SQLAlchemy models (7 tables)
+  models.py            # SQLAlchemy models (9 tables)
   schemas.py           # Pydantic request/response models
   store.py             # DB queries (events, scores — all tenant-scoped)
   admin_store.py       # DB queries (policy config, overrides, webhooks)
@@ -323,10 +329,12 @@ app/
     scoring.py         # Trust score computation
     policy.py          # Policy evaluation engine (thresholds + overrides)
     webhook.py         # HMAC-signed webhook delivery with retries
+  worker.py            # Background webhook delivery worker
 scripts/
   start.sh             # Startup script (migrate + uvicorn)
+  start-worker.sh      # Worker startup script (migrate + worker loop)
 alembic/               # Migration config and versions
-tests/                 # pytest suite (83 tests)
+tests/                 # pytest suite (113 tests)
 .github/workflows/
   ci.yml               # GitHub Actions CI (Postgres, migrations, pytest)
 Dockerfile             # Production container image
@@ -356,12 +364,49 @@ docker compose exec app python -m app.cli bootstrap
 Push your repo and Render will auto-detect `render.yaml`:
 
 1. Creates a managed PostgreSQL instance
-2. Builds the Docker image
+2. Builds the Docker image and deploys two services: **web** + **worker**
 3. Sets `DATABASE_URL` automatically from the database
-4. Runs migrations on every deploy via the startup script
-5. Health checks hit `/health`
+4. Both services run `alembic upgrade head` on boot (idempotent)
+5. Health checks hit `/health` on the web service
 
-Set `REQUIRE_AUTH=true` in the Render dashboard (already in `render.yaml`), then bootstrap a key via the Render shell.
+#### Deploy + Verify Checklist
+
+1. **Merge PR** and wait for both services to deploy.
+2. **Confirm services** in the Render dashboard: `agent-trust-bureau` (web) and `agent-trust-bureau-worker` (worker). Worker logs should show "Webhook worker started".
+3. **Bootstrap** a tenant and API key via the Render Shell:
+   ```
+   python -m app.cli bootstrap
+   ```
+   Save the printed key — it cannot be retrieved later.
+4. **Verify end-to-end** (replace `BASE` and `KEY`):
+   ```bash
+   BASE="https://<your-atb>.onrender.com"
+   KEY="atb_<your-key>"
+
+   # 1. Health
+   curl -sS "$BASE/health" | jq .
+
+   # 2. Trigger a policy decision (enqueues a webhook job)
+   curl -sS -H "X-API-Key: $KEY" "$BASE/v1/policy/decision/verify-agent" | jq .
+
+   # 3. Create a webhook so the worker has somewhere to deliver
+   curl -sS -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+     -d '{"url":"https://httpbin.org/post"}' "$BASE/v1/admin/policy/webhooks" | jq .
+
+   # 4. Trigger again (this time a webhook + job exist)
+   curl -sS -H "X-API-Key: $KEY" "$BASE/v1/policy/decision/verify-agent" | jq .
+
+   # 5. Check job queue (should show pending or completed)
+   WH_ID=$(curl -sS -H "X-API-Key: $KEY" "$BASE/v1/admin/policy/webhooks" | jq '.webhooks[0].id')
+   curl -sS -H "X-API-Key: $KEY" "$BASE/v1/admin/policy/webhooks/$WH_ID/jobs?limit=5" | jq .
+
+   # 6. Check delivery log (appears after worker processes the job)
+   curl -sS -H "X-API-Key: $KEY" "$BASE/v1/admin/policy/webhooks/$WH_ID/deliveries?limit=5" | jq .
+   ```
+
+#### Rollback (disable async)
+
+Set `WEBHOOK_ASYNC=false` on the web service in the Render dashboard and redeploy. Policy decisions will return to inline webhook delivery. The worker service can be suspended — it will harmlessly idle with no pending jobs.
 
 ### Fly.io
 

@@ -517,8 +517,12 @@ def test_async_policy_enqueues_job(async_client) -> None:
     """Policy decision endpoint enqueues a job when WEBHOOK_ASYNC=true."""
     client, sf = async_client
 
-    r = client.get("/v1/policy/decision/agent-async-test", headers=_H1)
-    assert r.status_code == 200
+    with patch("app.services.webhook.httpx.Client") as MockClientClass:
+        r = client.get("/v1/policy/decision/agent-async-test", headers=_H1)
+        assert r.status_code == 200
+
+        # httpx.Client must never be instantiated — no inline delivery
+        MockClientClass.assert_not_called()
 
     # Verify a job was created (not a delivery — no webhook call was made)
     db = sf()
