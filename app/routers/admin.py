@@ -1,6 +1,7 @@
 """Admin CRUD endpoints for policy configuration, agent overrides, and webhooks.
 
-All endpoints are tenant-scoped via AuthContext and protected by API key auth.
+All endpoints are tenant-scoped via AuthContext and protected by API key auth
+(even when REQUIRE_AUTH is false — admin always requires a key).
 Secrets are never returned in full — only the last 4 characters are exposed.
 """
 from __future__ import annotations
@@ -179,6 +180,7 @@ def add_webhook(
         url=wh.url,
         secret_last4=_secret_last4(wh.secret),
         enabled=wh.enabled,
+        revoked_at=wh.revoked_at,
         created_at=wh.created_at,
         updated_at=wh.updated_at,
     )
@@ -205,6 +207,7 @@ def update_webhook(
         url=wh.url,
         secret_last4=_secret_last4(wh.secret),
         enabled=wh.enabled,
+        revoked_at=wh.revoked_at,
         created_at=wh.created_at,
         updated_at=wh.updated_at,
     )
@@ -222,6 +225,7 @@ def get_webhooks(
             url=wh.url,
             secret_last4=_secret_last4(wh.secret),
             enabled=wh.enabled,
+            revoked_at=wh.revoked_at,
             created_at=wh.created_at,
             updated_at=wh.updated_at,
         )

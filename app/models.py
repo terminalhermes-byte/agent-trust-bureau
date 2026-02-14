@@ -121,6 +121,7 @@ class PolicyWebhook(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     secret: Mapped[str] = mapped_column(String(256), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )

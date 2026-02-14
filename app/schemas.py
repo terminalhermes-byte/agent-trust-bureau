@@ -149,6 +149,7 @@ class WebhookOut(BaseModel):
     url: str
     secret_last4: str
     enabled: bool
+    revoked_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

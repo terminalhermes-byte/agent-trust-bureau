@@ -5,6 +5,8 @@ another tenant's data.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -112,6 +114,7 @@ def create_webhook(
         url=url,
         secret=secret,
         enabled=True,
+        revoked_at=None,
     )
     db.add(webhook)
     db.commit()
@@ -139,6 +142,7 @@ def patch_webhook(
         return None
     if enabled is not None:
         webhook.enabled = enabled
+        webhook.revoked_at = None if enabled else datetime.now(timezone.utc)
     if rotate_secret is not None:
         webhook.secret = rotate_secret
     db.commit()
