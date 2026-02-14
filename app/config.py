@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     auto_create_tables: bool = False
     require_auth: bool = False  # set True in production; when False, all /v1 routes use default tenant
     score_rate_limit_per_minute: int = 30
+    webhook_async: bool = False  # set True in production to use DB-backed webhook queue + worker
+    webhook_worker_poll_seconds: float = 2.0  # how often the worker polls for pending jobs
 
     @model_validator(mode="after")
     def _normalize_database_url(self) -> "Settings":

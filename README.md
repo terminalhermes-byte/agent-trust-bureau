@@ -156,6 +156,32 @@ Each tenant can optionally configure a webhook via the admin API. When a policy 
 
 Webhook delivery is best-effort — a failed webhook does not block the API response.
 
+### Async Webhook Worker (v0.7)
+
+For production you can move webhook delivery off the request path using a DB-backed queue and a separate worker process.
+
+- Set `WEBHOOK_ASYNC=true` on the web service to enqueue delivery jobs instead of sending inline.
+- Run the worker process (`python -m app.worker`) to claim pending jobs, deliver webhooks, and record attempts.
+
+Local dev (2 terminals):
+
+```bash
+make devup
+WEBHOOK_ASYNC=true make worker
+```
+
+Render:
+
+- `render.yaml` defines both:
+  - a `web` service (the API)
+  - a `worker` service (`scripts/start-worker.sh`) that runs migrations then starts `python -m app.worker`
+
+### Webhook Delivery Logs
+
+Every webhook attempt (including retries) is persisted for operator visibility.
+
+- Endpoint: `GET /v1/admin/policy/webhooks/{id}/deliveries?limit=50`
+
 ## Admin API
 
 Tenant-scoped CRUD for policy configuration, agent overrides, and webhooks. All endpoints require auth and operate only on the calling tenant's data. Secrets are never returned in full — only the last 4 characters are shown.

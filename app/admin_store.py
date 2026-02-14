@@ -12,7 +12,7 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AgentPolicyOverride, PolicyConfig, PolicyWebhook, WebhookDelivery
+from app.models import AgentPolicyOverride, PolicyConfig, PolicyWebhook, WebhookDelivery, WebhookJob
 
 
 # ---------------------------------------------------------------------------
@@ -179,4 +179,26 @@ def list_webhook_deliveries(
         .order_by(WebhookDelivery.id.desc())
         .limit(limit)
     )
+    return list(db.scalars(stmt).all())
+
+
+# ---------------------------------------------------------------------------
+# Webhook Jobs (async queue visibility)
+# ---------------------------------------------------------------------------
+
+def list_webhook_jobs(
+    db: Session, webhook_id: int, tenant_id: int, *, limit: int = 50,
+    state: str | None = None,
+) -> list[WebhookJob]:
+    """Return recent jobs for a specific webhook, tenant-scoped."""
+    stmt = (
+        select(WebhookJob)
+        .where(
+            WebhookJob.webhook_id == webhook_id,
+            WebhookJob.tenant_id == tenant_id,
+        )
+    )
+    if state is not None:
+        stmt = stmt.where(WebhookJob.state == state)
+    stmt = stmt.order_by(WebhookJob.id.desc()).limit(limit)
     return list(db.scalars(stmt).all())

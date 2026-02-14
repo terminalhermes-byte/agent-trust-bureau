@@ -1,4 +1,4 @@
-.PHONY: setup migrate test run dev devup bootstrap create-key
+.PHONY: setup migrate test run dev devup bootstrap create-key worker worker-once
 
 VENV := .venv
 PIP := $(VENV)/bin/pip
@@ -34,3 +34,9 @@ bootstrap: migrate
 
 create-key:
 	$(PYTHON) -m app.cli create-key --tenant $(TENANT) --name $(or $(NAME),default)
+
+worker:
+	$(PYTHON) -m app.worker
+
+worker-once:
+	$(PYTHON) -m app.worker --once

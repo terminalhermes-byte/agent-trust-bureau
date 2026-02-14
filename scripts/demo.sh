@@ -167,7 +167,16 @@ curl -sf $AUTH "$BASE/v1/admin/policy/webhooks" | jq .
 ok "Full secret is never shown in list"
 
 # ------------------------------------------------------------------
-banner "10. Admin: policy config + overrides"
+banner "10. View webhook job queue (async worker)"
+# ------------------------------------------------------------------
+info "If WEBHOOK_ASYNC=true, jobs appear in the queue instead of being sent inline."
+JOBS=$(curl -sf $AUTH "$BASE/v1/admin/policy/webhooks/$WH_ID/jobs?limit=5" 2>/dev/null || echo '{"error":"endpoint not available or no jobs"}')
+echo "$JOBS" | jq . 2>/dev/null || echo "$JOBS"
+JCOUNT=$(echo "$JOBS" | jq '.count // 0' 2>/dev/null || echo "0")
+ok "Found $JCOUNT webhook job(s)"
+
+# ------------------------------------------------------------------
+banner "11. Admin: policy config + overrides"
 # ------------------------------------------------------------------
 info "Current thresholds:"
 curl -sf $AUTH "$BASE/v1/admin/policy/config" | jq .
