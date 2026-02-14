@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import secrets
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -107,8 +109,9 @@ def list_agent_overrides(
 # ---------------------------------------------------------------------------
 
 def create_webhook(
-    db: Session, tenant_id: int, *, url: str, secret: str
+    db: Session, tenant_id: int, *, url: str
 ) -> PolicyWebhook:
+    secret = secrets.token_urlsafe(32)
     webhook = PolicyWebhook(
         tenant_id=tenant_id,
         url=url,
@@ -135,7 +138,7 @@ def patch_webhook(
     tenant_id: int,
     *,
     enabled: bool | None = None,
-    rotate_secret: str | None = None,
+    rotate_secret: bool | None = None,
 ) -> PolicyWebhook | None:
     webhook = get_webhook(db, webhook_id, tenant_id)
     if webhook is None:
@@ -143,8 +146,8 @@ def patch_webhook(
     if enabled is not None:
         webhook.enabled = enabled
         webhook.revoked_at = None if enabled else datetime.now(timezone.utc)
-    if rotate_secret is not None:
-        webhook.secret = rotate_secret
+    if rotate_secret:
+        webhook.secret = secrets.token_urlsafe(32)
     db.commit()
     db.refresh(webhook)
     return webhook

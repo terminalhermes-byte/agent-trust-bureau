@@ -168,7 +168,7 @@ def add_webhook(
     db: Session = Depends(get_db),
 ) -> WebhookOut:
     try:
-        wh = create_webhook(db, auth.tenant_id, url=body.url, secret=body.secret)
+        wh = create_webhook(db, auth.tenant_id, url=body.url)
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
@@ -179,6 +179,7 @@ def add_webhook(
         id=wh.id,
         url=wh.url,
         secret_last4=_secret_last4(wh.secret),
+        secret=wh.secret,
         enabled=wh.enabled,
         revoked_at=wh.revoked_at,
         created_at=wh.created_at,
@@ -193,12 +194,13 @@ def update_webhook(
     auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> WebhookOut:
+    rotate_value = bool(body.rotate_secret)
     wh = patch_webhook(
         db,
         webhook_id,
         auth.tenant_id,
         enabled=body.enabled,
-        rotate_secret=body.rotate_secret,
+        rotate_secret=rotate_value,
     )
     if wh is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
@@ -206,6 +208,7 @@ def update_webhook(
         id=wh.id,
         url=wh.url,
         secret_last4=_secret_last4(wh.secret),
+        secret=wh.secret if rotate_value else None,
         enabled=wh.enabled,
         revoked_at=wh.revoked_at,
         created_at=wh.created_at,
@@ -224,6 +227,7 @@ def get_webhooks(
             id=wh.id,
             url=wh.url,
             secret_last4=_secret_last4(wh.secret),
+            secret=None,
             enabled=wh.enabled,
             revoked_at=wh.revoked_at,
             created_at=wh.created_at,

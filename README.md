@@ -192,17 +192,17 @@ curl -X DELETE -H "X-API-Key: $KEY" \
 
 ### Webhooks
 
-Webhook secrets are provided by the caller and are never returned in full by the API. Responses only include masked `secret_last4`.
+Webhook secrets are generated server-side and returned exactly once on creation or rotation. List and non-rotation updates only include masked `secret_last4`.
 
 ```bash
-# Create webhook (secret never returned in full)
+# Create webhook (secret returned once)
 curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"url": "https://hooks.example.com/policy", "secret": "your-secret-value"}' \
+  -d '{"url": "https://hooks.example.com/policy"}' \
   http://127.0.0.1:8010/v1/admin/policy/webhooks
 
-# Rotate secret (provide the new secret)
+# Rotate secret (secret returned once)
 curl -X PATCH -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"rotate_secret": "your-new-secret-value"}' \
+  -d '{"rotate_secret": true}' \
   http://127.0.0.1:8010/v1/admin/policy/webhooks/1
 
 # Disable/enable
