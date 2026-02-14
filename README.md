@@ -1,14 +1,14 @@
 # Agent Trust Bureau
 
-Trust-scoring and policy layer for AI agents. Ingests behavior events, computes explainable trust scores, and exposes them via a multi-tenant API.
+Trust-scoring and policy layer for AI agents. Ingests behavior events, computes explainable trust scores, evaluates policy decisions, and exposes them via a multi-tenant API with optional webhook notifications.
 
 ## Quick Start
+
+### Local (venv)
 
 ```bash
 make setup          # creates venv, installs deps, copies .env
 ```
-
-### Database
 
 Requires PostgreSQL. Default connection string in `.env`:
 
@@ -22,6 +22,14 @@ Create the database and run migrations:
 createdb agent_trust_bureau   # or via psql
 make migrate                  # runs alembic upgrade head
 ```
+
+### Docker
+
+```bash
+docker compose up --build
+```
+
+Starts PostgreSQL 16 and the app on port 8010. Migrations run automatically on startup.
 
 ### Bootstrap a Tenant and API Key
 
@@ -81,7 +89,7 @@ When `REQUIRE_AUTH=false` (default), auth is disabled and all requests run as te
 
 ### Key Format
 
-Generated keys follow the pattern `atb_<32 random hex chars>`. The first 12 characters (`atb_<8 hex>`) are stored as a prefix for efficient DB lookup; the full key is verified via constant-time hash comparison.
+Generated keys follow the pattern `atb_<random chars>`. The first 12 characters are stored as a prefix for efficient DB lookup; the full key is verified via constant-time hash comparison.
 
 ### Revoking Keys
 
@@ -89,13 +97,65 @@ Keys can be revoked by setting `revoked_at` on the `api_keys` row. A revoked key
 
 ## Multi-Tenancy
 
-All data (events, scores, score history) is scoped to a tenant via `tenant_id`. Tenant isolation is enforced at the query layer — a tenant can never read or write another tenant's data.
+All data (events, scores, score history, policy configs) is scoped to a tenant via `tenant_id`. Tenant isolation is enforced at the query layer — a tenant can never read or write another tenant's data.
 
 Key behaviors:
 - The same `agent_id` can exist independently under different tenants
 - `event_id` uniqueness is per-tenant, not global
 - Score computation only considers a tenant's own events
-- Score history only includes a tenant's own snapshots
+- Policy thresholds are per-tenant with optional per-agent overrides
+
+## Policy Layer
+
+The policy layer evaluates trust scores against configurable thresholds and returns structured decisions.
+
+### Policy Decision Endpoint
+
+```bash
+curl -H "X-API-Key: $KEY" http://127.0.0.1:8010/v1/policy/decision/agent-1
+```
+
+Response:
+
+```json
+{
+  "agent_id": "agent-1",
+  "decision": "review",
+  "score": 50.0,
+  "thresholds": {
+    "allow": 80.0,
+    "review": 60.0,
+    "block": 40.0
+  },
+  "explanation": "Score 50.0 >= block threshold 40.0 but < review threshold 60.0"
+}
+```
+
+### Decision Logic
+
+| Score Range | Decision |
+|-------------|----------|
+| `>= allow_threshold` | **allow** |
+| `>= review_threshold` | **review** |
+| `>= block_threshold` | **review** |
+| `< block_threshold` | **block** |
+
+Default thresholds: allow=80, review=60, block=40. Each tenant gets its own `policy_configs` row (seeded on migration).
+
+### Agent-Level Overrides
+
+Per-agent thresholds can be set via the `agent_policy_overrides` table. Override fields are optional — `NULL` values fall back to the tenant default.
+
+### Webhooks
+
+Each tenant can optionally configure a webhook in the `policy_webhooks` table. When a policy decision is computed:
+
+1. A JSON payload is POSTed to the webhook URL
+2. The payload is signed with `HMAC-SHA256` using the webhook secret
+3. The signature is sent in the `X-ATB-Signature` header
+4. Failed deliveries are retried up to 3 times with exponential backoff
+
+Webhook delivery is best-effort — a failed webhook does not block the API response.
 
 ## Rate Limiting
 
@@ -116,6 +176,7 @@ Returns `429 Too Many Requests` when exceeded. Set to `0` to disable.
 | GET | `/v1/intake/events/{agent_id}` | List events for an agent |
 | GET | `/v1/trust/score/{agent_id}` | Compute, persist, and return trust score |
 | GET | `/v1/trust/score/{agent_id}/history` | Score history (supports `?limit=` and `?before=`) |
+| GET | `/v1/policy/decision/{agent_id}` | Evaluate policy decision (score + thresholds) |
 
 ## Environment Variables
 
@@ -127,15 +188,19 @@ Returns `429 Too Many Requests` when exceeded. Set to `0` to disable.
 | `ENVIRONMENT` | `development` | Environment name |
 | `DB_ECHO` | `false` | Log SQL statements |
 | `AUTO_CREATE_TABLES` | `false` | Create tables on startup (use migrations instead) |
+| `PORT` | `8010` | Port for uvicorn (used by Docker / deploy scripts) |
 
 ## Database Tables
 
 | Table | Description |
 |-------|-------------|
 | **tenants** | Registered tenants (id, name, slug, is_active) |
-| **api_keys** | Hashed API keys bound to a tenant (prefix lookup, SHA-256 hash, revokable) |
+| **api_keys** | Hashed API keys bound to a tenant |
 | **events** | Raw behavior events scoped to a tenant + agent |
 | **score_history** | Computed score snapshots scoped to a tenant + agent |
+| **policy_configs** | Per-tenant policy thresholds (allow, review, block) |
+| **agent_policy_overrides** | Optional per-agent threshold overrides |
+| **policy_webhooks** | Optional webhook URLs with HMAC secrets |
 
 Migrations are managed with Alembic. After model changes:
 
@@ -154,16 +219,68 @@ app/
   rate_limit.py        # Per-agent sliding window rate limiter
   cli.py               # Bootstrap CLI (create tenant, generate keys)
   db.py                # Engine, session, init_db
-  models.py            # SQLAlchemy models (Tenant, ApiKey, EventRecord, ScoreSnapshot)
+  models.py            # SQLAlchemy models (7 tables)
   schemas.py           # Pydantic request/response models
   store.py             # DB queries (all tenant-scoped)
   routers/
     events.py          # /v1/intake/* routes
     trust.py           # /v1/trust/* routes
+    policy.py          # /v1/policy/* routes
   services/
     scoring.py         # Trust score computation
+    policy.py          # Policy evaluation engine (thresholds + overrides)
+    webhook.py         # HMAC-signed webhook delivery with retries
+scripts/
+  start.sh             # Startup script (migrate + uvicorn)
 alembic/               # Migration config and versions
-tests/                 # pytest suite (33 tests)
+tests/                 # pytest suite (53 tests)
+Dockerfile             # Production container image
+docker-compose.yml     # Local dev stack (Postgres + app)
+render.yaml            # Render deployment blueprint
+fly.toml               # Fly.io deployment config
+```
+
+## Deployment
+
+### Docker Compose (local / self-hosted)
+
+```bash
+docker compose up --build
+```
+
+The app container runs `scripts/start.sh` which executes `alembic upgrade head` before starting uvicorn. PostgreSQL 16 is started as a sidecar with a health check.
+
+After the stack is up, bootstrap your first tenant and key:
+
+```bash
+docker compose exec app python -m app.cli bootstrap
+```
+
+### Render
+
+Push your repo and Render will auto-detect `render.yaml`:
+
+1. Creates a managed PostgreSQL instance
+2. Builds the Docker image
+3. Sets `DATABASE_URL` automatically from the database
+4. Runs migrations on every deploy via the startup script
+5. Health checks hit `/health`
+
+Set `REQUIRE_AUTH=true` in the Render dashboard (already in `render.yaml`), then bootstrap a key via the Render shell.
+
+### Fly.io
+
+```bash
+fly launch          # uses fly.toml
+fly postgres create # create a managed Postgres
+fly secrets set DATABASE_URL="postgres://..."
+fly deploy
+```
+
+Migrations run on every deploy via `scripts/start.sh`. After first deploy:
+
+```bash
+fly ssh console -C "python -m app.cli bootstrap"
 ```
 
 ## Scoring Model
@@ -184,19 +301,19 @@ Baseline score is 50. Events shift it up or down by fixed weights:
 
 Score is clamped to [0, 100]. Tiers: high (>=80), medium (>=60), watch (>=40), restricted (<40).
 
-## Upgrading from v0.2
+## Upgrade Notes
 
-v0.3 replaces the env-var `API_KEYS` with DB-backed authentication:
+### v0.3 → v0.4
 
-1. Remove `API_KEYS` from your `.env`
-2. Add `REQUIRE_AUTH=true` to `.env`
-3. Run `make migrate` to create the `tenants` and `api_keys` tables (existing data is migrated to a "default" tenant)
-4. Run `make bootstrap` to generate your first API key
-5. Update clients to use the new key
+Run `make migrate` to create the `policy_configs`, `agent_policy_overrides`, and `policy_webhooks` tables. Existing tenants are seeded with default thresholds (allow=80, review=60, block=40). No env-var changes required.
+
+### v0.2 → v0.3
+
+Replaces `API_KEYS` env var with DB-backed auth. See migration 0003 for details.
 
 ## Next Steps
 
 1. Async score computation (background worker)
-2. Policy webhooks (allow/review/block thresholds)
-3. Score drift alerting and dashboard
-4. Tenant management admin API
+2. Score drift alerting and dashboard
+3. Tenant management admin API
+4. Policy config CRUD API (currently DB-only)

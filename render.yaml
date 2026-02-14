@@ -1,0 +1,25 @@
+databases:
+  - name: agent-trust-bureau-db
+    plan: free
+    databaseName: agent_trust_bureau
+    user: atb
+
+services:
+  - type: web
+    name: agent-trust-bureau
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: agent-trust-bureau-db
+          property: connectionString
+      - key: REQUIRE_AUTH
+        value: "true"
+      - key: ENVIRONMENT
+        value: production
+      - key: PORT
+        value: "8010"
+      - key: SCORE_RATE_LIMIT_PER_MINUTE
+        value: "30"

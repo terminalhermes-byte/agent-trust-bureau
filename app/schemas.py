@@ -47,3 +47,17 @@ class ScoreHistoryResponse(BaseModel):
     agent_id: str
     count: int
     snapshots: list[ScoreSnapshotOut]
+
+
+class ThresholdsOut(BaseModel):
+    allow: float
+    review: float
+    block: float
+
+
+class PolicyDecisionResponse(BaseModel):
+    agent_id: str
+    decision: str
+    score: float
+    thresholds: ThresholdsOut
+    explanation: str
