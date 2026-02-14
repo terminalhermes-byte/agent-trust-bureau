@@ -1,6 +1,6 @@
 # Agent Trust Bureau
 
-Trust-scoring and policy layer for AI agents. Ingests behavior events, computes explainable trust scores, evaluates policy decisions, and exposes them via a multi-tenant API with optional webhook notifications.
+Trust-scoring and policy layer for AI agents. Ingests behavior events, computes explainable trust scores, evaluates policy decisions, and exposes them via a multi-tenant API with admin CRUD and optional webhook notifications.
 
 ## Quick Start
 
@@ -66,6 +66,8 @@ Tests use an in-memory SQLite database — no Postgres required.
 make test
 ```
 
+CI runs automatically on push and PR via GitHub Actions (Postgres service container, migrations, full pytest).
+
 ## Authentication
 
 All `/v1` routes require an `X-API-Key` header when `REQUIRE_AUTH=true`.
@@ -97,13 +99,14 @@ Keys can be revoked by setting `revoked_at` on the `api_keys` row. A revoked key
 
 ## Multi-Tenancy
 
-All data (events, scores, score history, policy configs) is scoped to a tenant via `tenant_id`. Tenant isolation is enforced at the query layer — a tenant can never read or write another tenant's data.
+All data (events, scores, score history, policy configs, webhooks) is scoped to a tenant via `tenant_id`. Tenant isolation is enforced at the query layer — a tenant can never read or write another tenant's data.
 
 Key behaviors:
 - The same `agent_id` can exist independently under different tenants
 - `event_id` uniqueness is per-tenant, not global
 - Score computation only considers a tenant's own events
-- Policy thresholds are per-tenant with optional per-agent overrides
+- Policy thresholds and webhooks are per-tenant with optional per-agent overrides
+- Admin endpoints operate only on the calling tenant's data
 
 ## Policy Layer
 
@@ -142,13 +145,9 @@ Response:
 
 Default thresholds: allow=80, review=60, block=40. Each tenant gets its own `policy_configs` row (seeded on migration).
 
-### Agent-Level Overrides
-
-Per-agent thresholds can be set via the `agent_policy_overrides` table. Override fields are optional — `NULL` values fall back to the tenant default.
-
 ### Webhooks
 
-Each tenant can optionally configure a webhook in the `policy_webhooks` table. When a policy decision is computed:
+Each tenant can optionally configure a webhook via the admin API. When a policy decision is computed:
 
 1. A JSON payload is POSTed to the webhook URL
 2. The payload is signed with `HMAC-SHA256` using the webhook secret
@@ -156,6 +155,57 @@ Each tenant can optionally configure a webhook in the `policy_webhooks` table. W
 4. Failed deliveries are retried up to 3 times with exponential backoff
 
 Webhook delivery is best-effort — a failed webhook does not block the API response.
+
+## Admin API
+
+Tenant-scoped CRUD for policy configuration, agent overrides, and webhooks. All endpoints require auth and operate only on the calling tenant's data. Secrets are never returned in full — only the last 4 characters are shown.
+
+### Policy Config
+
+```bash
+# Get current thresholds
+curl -H "X-API-Key: $KEY" http://127.0.0.1:8010/v1/admin/policy/config
+
+# Update thresholds (allow >= review >= block, all 0-100)
+curl -X PUT -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"allow_threshold": 85, "review_threshold": 65, "block_threshold": 45}' \
+  http://127.0.0.1:8010/v1/admin/policy/config
+```
+
+### Agent Overrides
+
+Per-agent threshold overrides. Threshold fields are optional — `null` values fall back to the tenant default.
+
+```bash
+# Create override
+curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"agent_id": "agent-1", "allow_threshold": 90}' \
+  http://127.0.0.1:8010/v1/admin/policy/overrides
+
+# List overrides
+curl -H "X-API-Key: $KEY" http://127.0.0.1:8010/v1/admin/policy/overrides
+
+# Delete override
+curl -X DELETE -H "X-API-Key: $KEY" \
+  http://127.0.0.1:8010/v1/admin/policy/overrides/agent-1
+```
+
+### Webhooks
+
+```bash
+# Create webhook (secret must be >= 8 chars)
+curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"url": "https://hooks.example.com/policy", "secret": "my-webhook-secret"}' \
+  http://127.0.0.1:8010/v1/admin/policy/webhooks
+
+# Disable/enable or rotate secret
+curl -X PATCH -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"enabled": false}' \
+  http://127.0.0.1:8010/v1/admin/policy/webhooks/1
+
+# List webhooks
+curl -H "X-API-Key: $KEY" http://127.0.0.1:8010/v1/admin/policy/webhooks
+```
 
 ## Rate Limiting
 
@@ -175,8 +225,16 @@ Returns `429 Too Many Requests` when exceeded. Set to `0` to disable.
 | POST | `/v1/intake/events` | Ingest a behavior event |
 | GET | `/v1/intake/events/{agent_id}` | List events for an agent |
 | GET | `/v1/trust/score/{agent_id}` | Compute, persist, and return trust score |
-| GET | `/v1/trust/score/{agent_id}/history` | Score history (supports `?limit=` and `?before=`) |
+| GET | `/v1/trust/score/{agent_id}/history` | Score history (`?limit=`, `?before=`) |
 | GET | `/v1/policy/decision/{agent_id}` | Evaluate policy decision (score + thresholds) |
+| GET | `/v1/admin/policy/config` | Get tenant policy thresholds |
+| PUT | `/v1/admin/policy/config` | Update tenant policy thresholds |
+| POST | `/v1/admin/policy/overrides` | Create agent override |
+| DELETE | `/v1/admin/policy/overrides/{agent_id}` | Delete agent override |
+| GET | `/v1/admin/policy/overrides` | List agent overrides (`?limit=`) |
+| POST | `/v1/admin/policy/webhooks` | Create webhook |
+| PATCH | `/v1/admin/policy/webhooks/{id}` | Update webhook (enable/disable, rotate secret) |
+| GET | `/v1/admin/policy/webhooks` | List webhooks |
 
 ## Environment Variables
 
@@ -221,11 +279,13 @@ app/
   db.py                # Engine, session, init_db
   models.py            # SQLAlchemy models (7 tables)
   schemas.py           # Pydantic request/response models
-  store.py             # DB queries (all tenant-scoped)
+  store.py             # DB queries (events, scores — all tenant-scoped)
+  admin_store.py       # DB queries (policy config, overrides, webhooks)
   routers/
     events.py          # /v1/intake/* routes
     trust.py           # /v1/trust/* routes
     policy.py          # /v1/policy/* routes
+    admin.py           # /v1/admin/* CRUD routes
   services/
     scoring.py         # Trust score computation
     policy.py          # Policy evaluation engine (thresholds + overrides)
@@ -233,7 +293,9 @@ app/
 scripts/
   start.sh             # Startup script (migrate + uvicorn)
 alembic/               # Migration config and versions
-tests/                 # pytest suite (53 tests)
+tests/                 # pytest suite (80 tests)
+.github/workflows/
+  ci.yml               # GitHub Actions CI (Postgres, migrations, pytest)
 Dockerfile             # Production container image
 docker-compose.yml     # Local dev stack (Postgres + app)
 render.yaml            # Render deployment blueprint
@@ -283,6 +345,17 @@ Migrations run on every deploy via `scripts/start.sh`. After first deploy:
 fly ssh console -C "python -m app.cli bootstrap"
 ```
 
+## CI
+
+GitHub Actions runs on every push and pull request:
+
+- Spins up a Postgres 16 service container
+- Installs Python 3.12 with pip caching
+- Runs `alembic upgrade head` against the real database
+- Runs the full pytest suite
+
+See `.github/workflows/ci.yml`.
+
 ## Scoring Model
 
 Baseline score is 50. Events shift it up or down by fixed weights:
@@ -303,6 +376,10 @@ Score is clamped to [0, 100]. Tiers: high (>=80), medium (>=60), watch (>=40), r
 
 ## Upgrade Notes
 
+### v0.4 → v0.5
+
+No database migrations. Adds admin CRUD endpoints and GitHub Actions CI. No breaking changes.
+
 ### v0.3 → v0.4
 
 Run `make migrate` to create the `policy_configs`, `agent_policy_overrides`, and `policy_webhooks` tables. Existing tenants are seeded with default thresholds (allow=80, review=60, block=40). No env-var changes required.
@@ -315,5 +392,5 @@ Replaces `API_KEYS` env var with DB-backed auth. See migration 0003 for details.
 
 1. Async score computation (background worker)
 2. Score drift alerting and dashboard
-3. Tenant management admin API
-4. Policy config CRUD API (currently DB-only)
+3. Tenant management admin API (create/deactivate tenants via REST)
+4. Admin role separation (admin keys vs read-only keys)

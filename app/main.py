@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.db import init_db
-from app.routers import events, policy, trust
+from app.routers import admin, events, policy, trust
 
 
 @asynccontextmanager
@@ -21,6 +21,7 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(events.router, prefix=settings.api_prefix)
 app.include_router(trust.router, prefix=settings.api_prefix)
 app.include_router(policy.router, prefix=settings.api_prefix)
+app.include_router(admin.router, prefix=settings.api_prefix)
 
 
 @app.get("/")
