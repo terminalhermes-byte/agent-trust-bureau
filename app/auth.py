@@ -84,3 +84,26 @@ def require_api_key(
             detail="Invalid or missing API key",
         )
     return ctx
+
+
+def require_api_key_strict(
+    api_key: str | None = Security(_api_key_header),
+    db: Session = Depends(get_db),
+) -> AuthContext:
+    """Always require an API key, even when REQUIRE_AUTH is false.
+
+    Use for admin endpoints so they can't be accidentally exposed in "dev mode".
+    """
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+        )
+
+    ctx = _resolve_key(db, api_key)
+    if ctx is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+        )
+    return ctx

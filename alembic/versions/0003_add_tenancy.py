@@ -65,7 +65,15 @@ def upgrade() -> None:
     op.create_index(op.f("ix_events_tenant_id"), "events", ["tenant_id"], unique=False)
 
     # Replace global unique on event_id with per-tenant unique
-    op.drop_constraint("uq_events_event_id", "events", type_="unique")
+    # 0001 created a UNIQUE constraint on events.event_id without an explicit name.
+    # On Postgres this becomes something like `events_event_id_key`, so we must
+    # locate and drop the constraint dynamically.
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    for uc in inspector.get_unique_constraints("events"):
+        if uc.get("column_names") == ["event_id"]:
+            op.drop_constraint(uc["name"], "events", type_="unique")
+            break
     op.create_unique_constraint("uq_events_tenant_event_id", "events", ["tenant_id", "event_id"])
 
     # --- add tenant_id to score_history ---
