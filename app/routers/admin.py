@@ -15,7 +15,9 @@ from app.admin_store import (
     create_webhook,
     delete_agent_override,
     get_policy_config,
+    get_webhook,
     list_agent_overrides,
+    list_webhook_deliveries,
     list_webhooks,
     patch_webhook,
     upsert_policy_config,
@@ -29,6 +31,8 @@ from app.schemas import (
     PolicyConfigOut,
     PolicyConfigUpdate,
     WebhookCreate,
+    WebhookDeliveryListResponse,
+    WebhookDeliveryOut,
     WebhookListResponse,
     WebhookOut,
     WebhookPatch,
@@ -236,3 +240,34 @@ def get_webhooks(
         for wh in webhooks
     ]
     return WebhookListResponse(count=len(items), webhooks=items)
+
+
+# ---------------------------------------------------------------------------
+# Webhook Deliveries: GET (list)
+# ---------------------------------------------------------------------------
+
+@router.get("/policy/webhooks/{webhook_id}/deliveries", response_model=WebhookDeliveryListResponse)
+def get_deliveries(
+    webhook_id: int,
+    limit: int = Query(default=50, ge=1, le=500),
+    auth: AuthContext = Depends(require_api_key_strict),
+    db: Session = Depends(get_db),
+) -> WebhookDeliveryListResponse:
+    # Verify webhook exists and belongs to this tenant
+    wh = get_webhook(db, webhook_id, auth.tenant_id)
+    if wh is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
+    deliveries = list_webhook_deliveries(db, webhook_id, auth.tenant_id, limit=limit)
+    items = [
+        WebhookDeliveryOut(
+            id=d.id,
+            webhook_id=d.webhook_id,
+            attempt=d.attempt,
+            status_code=d.status_code,
+            error=d.error,
+            success=d.success,
+            created_at=d.created_at,
+        )
+        for d in deliveries
+    ]
+    return WebhookDeliveryListResponse(count=len(items), deliveries=items)

@@ -2,6 +2,7 @@
 
 Sends HMAC-signed POST requests to tenant webhook URLs when a policy decision
 is computed. Retries with exponential backoff on failure (bounded).
+Each attempt is logged to the ``webhook_deliveries`` table for operator visibility.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import PolicyWebhook
+from app.models import PolicyWebhook, WebhookDelivery
 from app.services.policy import PolicyDecision
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,29 @@ def _build_payload(agent_id: str, decision: PolicyDecision) -> dict[str, Any]:
         "thresholds": asdict(decision.thresholds),
         "explanation": decision.explanation,
     }
+
+
+def _record_delivery(
+    db: Session,
+    webhook_id: int,
+    tenant_id: int,
+    attempt: int,
+    *,
+    status_code: int | None = None,
+    error: str | None = None,
+    success: bool = False,
+) -> None:
+    """Persist a single delivery attempt to the database."""
+    row = WebhookDelivery(
+        webhook_id=webhook_id,
+        tenant_id=tenant_id,
+        attempt=attempt,
+        status_code=status_code,
+        error=error,
+        success=success,
+    )
+    db.add(row)
+    db.commit()
 
 
 def send_webhook(
@@ -79,13 +103,18 @@ def send_webhook(
     close_client = _client is None
 
     try:
-        return _send_with_retry(client, webhook.url, payload_bytes, headers)
+        return _send_with_retry(
+            db, webhook.id, tenant_id, client, webhook.url, payload_bytes, headers,
+        )
     finally:
         if close_client:
             client.close()
 
 
 def _send_with_retry(
+    db: Session,
+    webhook_id: int,
+    tenant_id: int,
     client: httpx.Client,
     url: str,
     payload_bytes: bytes,
@@ -99,15 +128,27 @@ def _send_with_retry(
             resp = client.post(url, content=payload_bytes, headers=headers)
             if 200 <= resp.status_code < 300:
                 logger.info("Webhook delivered (attempt %d): %s", attempt, url)
+                _record_delivery(
+                    db, webhook_id, tenant_id, attempt,
+                    status_code=resp.status_code, success=True,
+                )
                 return True
             logger.warning(
                 "Webhook attempt %d/%d got status %d from %s",
                 attempt, MAX_RETRIES, resp.status_code, url,
             )
+            _record_delivery(
+                db, webhook_id, tenant_id, attempt,
+                status_code=resp.status_code, success=False,
+            )
         except httpx.HTTPError as exc:
             logger.warning(
                 "Webhook attempt %d/%d failed: %s — %s",
                 attempt, MAX_RETRIES, url, exc,
+            )
+            _record_delivery(
+                db, webhook_id, tenant_id, attempt,
+                error=str(exc), success=False,
             )
 
         if attempt < MAX_RETRIES:

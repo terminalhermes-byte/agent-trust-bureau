@@ -158,3 +158,18 @@ class WebhookOut(BaseModel):
 class WebhookListResponse(BaseModel):
     count: int
     webhooks: list[WebhookOut]
+
+
+class WebhookDeliveryOut(BaseModel):
+    id: int
+    webhook_id: int
+    attempt: int
+    status_code: Optional[int]
+    error: Optional[str]
+    success: bool
+    created_at: datetime
+
+
+class WebhookDeliveryListResponse(BaseModel):
+    count: int
+    deliveries: list[WebhookDeliveryOut]

@@ -12,7 +12,7 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AgentPolicyOverride, PolicyConfig, PolicyWebhook
+from app.models import AgentPolicyOverride, PolicyConfig, PolicyWebhook, WebhookDelivery
 
 
 # ---------------------------------------------------------------------------
@@ -158,5 +158,25 @@ def list_webhooks(db: Session, tenant_id: int) -> list[PolicyWebhook]:
         select(PolicyWebhook)
         .where(PolicyWebhook.tenant_id == tenant_id)
         .order_by(PolicyWebhook.id.asc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+# ---------------------------------------------------------------------------
+# Webhook Deliveries
+# ---------------------------------------------------------------------------
+
+def list_webhook_deliveries(
+    db: Session, webhook_id: int, tenant_id: int, *, limit: int = 50
+) -> list[WebhookDelivery]:
+    """Return recent delivery attempts for a specific webhook, tenant-scoped."""
+    stmt = (
+        select(WebhookDelivery)
+        .where(
+            WebhookDelivery.webhook_id == webhook_id,
+            WebhookDelivery.tenant_id == tenant_id,
+        )
+        .order_by(WebhookDelivery.id.desc())
+        .limit(limit)
     )
     return list(db.scalars(stmt).all())
