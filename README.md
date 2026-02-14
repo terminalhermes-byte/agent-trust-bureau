@@ -1,136 +1,106 @@
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/terminalhermes-byte/agent-trust-bureau)
+# Agent Trust Bureau
 
-# Agent Trust Bureau (MVP)
+Trust-scoring and policy layer for AI agents. Ingests behavior events, computes explainable trust scores, and exposes them via API.
 
-A centralized reputation service for AI Agents, designed for Agent Marketplaces.
+## Quick Start
 
-## Features
-
-- **Trust Scores**: Wilson Score algorithm for fair ranking with low sample sizes
-- **SVG Badges**: Embeddable trust badges for agent profiles
-- **Live Dashboard**: Real-time feed and leaderboard
-- **API Key Auth**: Protected event ingestion endpoint
-- **Rate Limiting**: 100 req/min (authenticated), 30 req/min (public)
-- **Async Processing**: Background score recomputation
-
-## Getting Started
-
-### 1. Install Dependencies
 ```bash
-pip install -r requirements.txt
+make setup          # creates venv, installs deps, copies .env
 ```
 
-### 2. Configure API Keys (Optional)
+### Database
+
+Requires PostgreSQL. Default connection string in `.env`:
+
+```
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/agent_trust_bureau
+```
+
+Create the database and run migrations:
+
 ```bash
-# Set allowed API keys (comma-separated)
-export ATB_API_KEYS="your-marketplace-key-1,your-marketplace-key-2"
+createdb agent_trust_bureau   # or via psql
+make migrate                  # runs alembic upgrade head
 ```
 
-### 3. Run the Server
+### Run
+
 ```bash
-uvicorn src.main:app --reload
+make dev    # uvicorn with --reload on port 8010
+make run    # production mode (no reload)
 ```
-- **Dashboard:** `http://localhost:8000/dashboard`
-- **API Docs:** `http://localhost:8000/docs`
-- **Badge Demo:** `http://localhost:8000/examples/demo.html`
 
-### 4. Run Tests
+- API docs: http://127.0.0.1:8010/docs
+- Health: http://127.0.0.1:8010/health
+
+### Tests
+
+Tests use an in-memory SQLite database — no Postgres required.
+
 ```bash
-pytest tests/ -v
+make test
 ```
 
-## API Usage
+## API Surface (v1)
 
-### Submit Reputation Events (Authenticated)
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/intake/events` | Ingest a behavior event |
+| GET | `/v1/intake/events/{agent_id}` | List events for an agent |
+| GET | `/v1/trust/score/{agent_id}` | Compute and persist trust score |
+
+## Database Tables
+
+- **events** — raw behavior events ingested via API
+- **score_history** — snapshots of computed scores (written on each score request)
+
+Migrations are managed with Alembic. After model changes:
+
 ```bash
-curl -X POST "http://localhost:8000/v1/events" \
-     -H "Content-Type: application/json" \
-     -H "X-API-Key: your-api-key" \
-     -d '[{
-           "rater_id": "marketplace_1",
-           "subject_id": "https://agent.example.com",
-           "capability": "python-scripting",
-           "outcome": 1,
-           "cost_usd": 0.05
-         }]'
+alembic revision --autogenerate -m "describe change"
+make migrate
 ```
 
-### Get Trust Score (Public)
-```bash
-curl "http://localhost:8000/v1/scores/https%3A%2F%2Fagent.example.com"
+## Project Structure
+
+```
+app/
+  main.py              # FastAPI app + startup
+  config.py            # Settings from env vars
+  db.py                # Engine, session, init_db
+  models.py            # SQLAlchemy models (EventRecord, ScoreSnapshot)
+  schemas.py           # Pydantic request/response models
+  store.py             # DB queries (insert, list, save snapshot)
+  routers/
+    events.py          # /v1/intake/* routes
+    trust.py           # /v1/trust/* routes
+  services/
+    scoring.py         # Trust score computation
+alembic/               # Migration config and versions
+tests/                 # pytest suite
 ```
 
-Response:
-```json
-{
-  "agent_id": "https://agent.example.com",
-  "trust_score": 87.5,
-  "confidence": "high",
-  "breakdown": {
-    "python-scripting": {"score": 92.1, "total": 45, "success_rate": 95.5}
-  }
-}
-```
+## Scoring Model
 
-### Get Trust Badge (Public)
-```
-http://localhost:8000/v1/badge/https%3A%2F%2Fagent.example.com.svg
-```
+Baseline score is 50. Events shift it up or down by fixed weights:
 
-Returns an SVG badge like: ![trust: 87%](https://img.shields.io/badge/trust-87%25-brightgreen)
+| Event Type | Weight |
+|------------|--------|
+| human_approved_action | +6 |
+| task_completed_without_rework | +4 |
+| policy_compliant_response | +3 |
+| safe_tool_usage | +2 |
+| hallucination_detected | -8 |
+| manual_rollback_required | -10 |
+| unsafe_tool_call | -15 |
+| policy_violation | -20 |
+| sensitive_data_leak_attempt | -25 |
 
-## Authentication
+Score is clamped to [0, 100]. Tiers: high (>=80), medium (>=60), watch (>=40), restricted (<40).
 
-The `/events` endpoint requires an API key passed via the `X-API-Key` header.
+## Next Steps
 
-Configure allowed keys via environment variable:
-```bash
-export ATB_API_KEYS="key1,key2,key3"
-```
-
-For production, use a secrets manager and rotate keys regularly.
-
-## Rate Limits
-
-| Endpoint | Limit |
-|----------|-------|
-| `/events` (authenticated) | 100/minute |
-| `/scores`, `/badge`, `/dashboard` | 30/minute |
-
-Rate limits are keyed by API key (authenticated) or IP address (public).
-
-## Deploy
-
-### Render (Zero Config)
-1. Fork this repo
-2. Click the "Deploy to Render" button above
-3. Add `ATB_API_KEYS` environment variable in Render dashboard
-
-### Fly.io
-```bash
-fly launch
-fly secrets set ATB_API_KEYS="your-key-1,your-key-2"
-fly deploy
-```
-
-### Docker
-```bash
-docker build -t agent-trust-bureau .
-docker run -p 8000:8000 -e ATB_API_KEYS="key1,key2" agent-trust-bureau
-```
-
-## Architecture
-
-- **FastAPI**: Core API framework
-- **SQLite**: File-based DB for MVP (easy backup/migrate)
-- **Wilson Score**: Trust algorithm that handles low sample sizes well
-- **slowapi**: Rate limiting
-- **BackgroundTasks**: Async score recomputation
-
-## Roadmap
-
-- [ ] Redis backend for distributed rate limiting
-- [ ] Webhook notifications for score changes
-- [ ] Agent verification/claims
-- [ ] Historical score tracking
-- [ ] GraphQL API
+1. Auth + API keys for tenant isolation
+2. Async score computation (background worker)
+3. Policy webhooks (allow/review/block thresholds)
+4. Score drift alerting and dashboard
