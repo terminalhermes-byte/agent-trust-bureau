@@ -1,6 +1,12 @@
-# Agent Trust Bureau
+# Agent Trust Bureau v1.0.0
 
 Trust-scoring and policy layer for AI agents. Ingests behavior events, computes explainable trust scores, evaluates policy decisions, and exposes them via a multi-tenant API with admin CRUD and optional webhook notifications.
+
+> **New here?** Start with the [Pilot Quickstart](docs/V1_QUICKSTART.md) — get running in under 10 minutes.
+>
+> **Operating in production?** See the [Operator Runbook](docs/V1_RUNBOOK.md) for troubleshooting and ops procedures.
+>
+> **What's in this release?** See the [Changelog](CHANGELOG.md).
 
 ## Quick Start
 
