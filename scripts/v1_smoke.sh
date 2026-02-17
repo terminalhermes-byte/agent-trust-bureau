@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v1_smoke.sh — Agent Trust Bureau v1.0.0 smoke test
+# v1_smoke.sh — Agent Trust Bureau v1.1.0 smoke test
 #
 # Usage:
 #   ./scripts/v1_smoke.sh <BASE_URL> <API_KEY>
@@ -29,7 +29,7 @@ check() {
 
 echo ""
 echo "======================================================================"
-echo "  Agent Trust Bureau v1.0.0 — Smoke Test"
+echo "  Agent Trust Bureau v1.1.0 — Smoke Test"
 echo "  Base: $BASE"
 echo "======================================================================"
 echo ""

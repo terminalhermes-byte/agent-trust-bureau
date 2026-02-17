@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 APP_DESCRIPTION = """
 Agent Trust Bureau is the policy and trust layer for AI-agent systems.

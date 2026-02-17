@@ -2,6 +2,28 @@
 
 All notable changes to Agent Trust Bureau are documented here.
 
+## [1.1.0] — 2026-02-17
+
+Second production release focused on reliability hardening, security controls, operator tooling, and architecture planning.
+
+### Highlights
+
+- Reliability fixes for async webhook processing edge cases:
+  - Safe exception handling in `process_webhook_job`
+  - Proper attempt increment during stale-job recovery
+  - Replay behavior corrected for dead jobs at max attempts
+- Security hardening:
+  - HTTPS-only webhook URL validation (SSRF guardrails)
+  - Tightened admin input validation and state checks
+- Operator and deployment tooling:
+  - `scripts/deploy_verify.sh` for post-deploy verification
+  - `scripts/benchmark.sh` for queue/perf sanity checks
+  - New `/console` operator UI route for rapid runtime checks
+- Documentation:
+  - Architecture critique and 90-day roadmap (`docs/ARCHITECTURE_CRITIQUE.md`)
+  - One-page business white paper (`docs/ATB_WHITE_PAPER.md`)
+- Test coverage expanded to 205 passing tests.
+
 ## [1.0.0] — 2026-02-17
 
 First pilot-ready release. All core trust-scoring, policy evaluation, webhook delivery, and admin operations are implemented, tested, and documented.

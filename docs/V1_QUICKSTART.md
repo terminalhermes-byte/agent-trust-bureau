@@ -1,4 +1,4 @@
-# Agent Trust Bureau v1.0.0 — Pilot Quickstart
+# Agent Trust Bureau v1.1.0 — Pilot Quickstart
 
 Get ATB running and verified in under 10 minutes.
 

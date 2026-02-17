@@ -1,4 +1,4 @@
-# Agent Trust Bureau v1.0.0 — Operator Runbook
+# Agent Trust Bureau v1.1.0 — Operator Runbook
 
 Troubleshooting and operational procedures for production ATB.
 
