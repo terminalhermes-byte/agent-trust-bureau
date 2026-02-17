@@ -137,6 +137,13 @@ class AgentOverrideListResponse(BaseModel):
 class WebhookCreate(BaseModel):
     url: str = Field(..., min_length=1)
 
+    @model_validator(mode="after")
+    def _validate_url(self) -> WebhookCreate:
+        """Only allow https:// URLs to prevent SSRF via internal/file URLs."""
+        if not self.url.startswith("https://"):
+            raise ValueError("Webhook URL must use HTTPS")
+        return self
+
 
 class WebhookPatch(BaseModel):
     enabled: Optional[bool] = None
