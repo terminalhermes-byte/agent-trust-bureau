@@ -7,6 +7,8 @@ Trust-scoring and policy layer for AI agents. Ingests behavior events, computes 
 > **Operating in production?** See the [Operator Runbook](docs/V1_RUNBOOK.md) for troubleshooting and ops procedures.
 >
 > **What's in this release?** See the [Changelog](CHANGELOG.md).
+>
+> **Need business context?** Read the one-page [ATB White Paper](docs/ATB_WHITE_PAPER.md).
 
 ## Quick Start
 
@@ -62,6 +64,7 @@ make run    # production mode (no reload)
 ```
 
 - API docs: http://127.0.0.1:8010/docs
+- Operator console: http://127.0.0.1:8010/console
 - Health: http://127.0.0.1:8010/health
 
 ### Tests
