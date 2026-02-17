@@ -197,3 +197,73 @@ class WebhookJobOut(BaseModel):
 class WebhookJobListResponse(BaseModel):
     count: int
     jobs: list[WebhookJobOut]
+
+
+# ---------------------------------------------------------------------------
+# Admin: API Key Management
+# ---------------------------------------------------------------------------
+
+class ApiKeyCreate(BaseModel):
+    name: str = Field(default="default", min_length=1, max_length=128)
+
+
+class ApiKeyOut(BaseModel):
+    id: int
+    name: str
+    key_prefix: str
+    is_active: bool
+    created_at: datetime
+    revoked_at: Optional[datetime] = None
+    # Only returned on create; otherwise None.
+    raw_key: Optional[str] = None
+
+
+class ApiKeyListResponse(BaseModel):
+    count: int
+    keys: list[ApiKeyOut]
+
+
+# ---------------------------------------------------------------------------
+# Admin: Webhook Replay
+# ---------------------------------------------------------------------------
+
+class WebhookReplayRequest(BaseModel):
+    job_id: Optional[int] = None
+    last_failed: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> WebhookReplayRequest:
+        has_job_id = self.job_id is not None
+        has_last_failed = self.last_failed is True
+        if has_job_id == has_last_failed:
+            raise ValueError("Provide exactly one of 'job_id' or 'last_failed: true'")
+        return self
+
+
+class WebhookReplayResponse(BaseModel):
+    replayed: int
+    jobs: list[WebhookJobOut]
+
+
+# ---------------------------------------------------------------------------
+# Admin: Webhook Queue Stats
+# ---------------------------------------------------------------------------
+
+class WebhookStatsOut(BaseModel):
+    webhook_id: int
+    pending: int
+    in_progress: int
+    failed: int
+    dead: int
+    completed: int
+    recent_success_rate: Optional[float] = None
+
+
+# ---------------------------------------------------------------------------
+# Admin: Retention Cleanup
+# ---------------------------------------------------------------------------
+
+class CleanupResult(BaseModel):
+    deliveries_deleted: int
+    jobs_deleted: int
+    dry_run: bool

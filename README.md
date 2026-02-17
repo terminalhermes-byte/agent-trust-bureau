@@ -93,9 +93,23 @@ When `REQUIRE_AUTH=false` (default), auth is disabled and all requests run as te
 
 Generated keys follow the pattern `atb_<random chars>`. The first 12 characters are stored as a prefix for efficient DB lookup; the full key is verified via constant-time hash comparison.
 
-### Revoking Keys
+### API Key Management (v0.8)
 
-Keys can be revoked by setting `revoked_at` on the `api_keys` row. A revoked key returns `401 Unauthorized`.
+Keys can be created, listed, and revoked via the admin API:
+
+```bash
+# Create a new key (raw key returned once)
+curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"name": "ci-bot"}' http://127.0.0.1:8010/v1/admin/keys
+
+# List all keys (raw key never shown)
+curl -H "X-API-Key: $KEY" http://127.0.0.1:8010/v1/admin/keys
+
+# Revoke a key
+curl -X POST -H "X-API-Key: $KEY" http://127.0.0.1:8010/v1/admin/keys/3/revoke
+```
+
+A revoked key returns `401 Unauthorized` on all subsequent requests.
 
 ## Multi-Tenancy
 
@@ -182,6 +196,34 @@ Every webhook attempt (including retries) is persisted for operator visibility.
 
 - Endpoint: `GET /v1/admin/policy/webhooks/{id}/deliveries?limit=50`
 
+### Webhook Queue Stats (v0.8)
+
+Get a summary of job counts by state and recent delivery success rate:
+
+```bash
+curl -H "X-API-Key: $KEY" http://127.0.0.1:8010/v1/admin/policy/webhooks/1/stats
+```
+
+Returns: `{ "webhook_id": 1, "pending": 2, "in_progress": 0, "failed": 1, "dead": 0, "completed": 15, "recent_success_rate": 93.8 }`
+
+### Webhook Replay (v0.8)
+
+Replay a failed or dead webhook job (resets it to pending for re-delivery):
+
+```bash
+# Replay a specific job by ID
+curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"job_id": 42}' \
+  http://127.0.0.1:8010/v1/admin/policy/webhooks/1/replay
+
+# Replay the most recent failed/dead job
+curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"last_failed": true}' \
+  http://127.0.0.1:8010/v1/admin/policy/webhooks/1/replay
+```
+
+Only jobs in `failed` or `dead` state can be replayed. The job's attempt counter is preserved for audit.
+
 ## Admin API
 
 Tenant-scoped CRUD for policy configuration, agent overrides, and webhooks. All endpoints require auth and operate only on the calling tenant's data. Secrets are never returned in full — only the last 4 characters are shown.
@@ -240,6 +282,20 @@ curl -X PATCH -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
 curl -H "X-API-Key: $KEY" http://127.0.0.1:8010/v1/admin/policy/webhooks
 ```
 
+### Retention Cleanup (v0.8)
+
+Delete old webhook deliveries and terminal (completed/dead) jobs:
+
+```bash
+# Preview what would be deleted (dry run)
+python -m app.cli cleanup --days 30 --dry-run
+
+# Actually delete records older than 30 days
+python -m app.cli cleanup --days 30
+```
+
+Active jobs (pending, in_progress, failed) are never deleted — only terminal states.
+
 ## Rate Limiting
 
 The score endpoint (`GET /v1/trust/score/{agent_id}`) is rate-limited per agent_id.
@@ -270,6 +326,11 @@ Returns `429 Too Many Requests` when exceeded. Set to `0` to disable.
 | GET | `/v1/admin/policy/webhooks` | List webhooks |
 | GET | `/v1/admin/policy/webhooks/{id}/deliveries` | Delivery attempt log (`?limit=`) |
 | GET | `/v1/admin/policy/webhooks/{id}/jobs` | Async job queue (`?state=&limit=`) |
+| GET | `/v1/admin/policy/webhooks/{id}/stats` | Queue stats (counts by state + success rate) |
+| POST | `/v1/admin/policy/webhooks/{id}/replay` | Replay failed/dead job (`{job_id}` or `{last_failed}`) |
+| POST | `/v1/admin/keys` | Create API key (raw key returned once) |
+| GET | `/v1/admin/keys` | List API keys (`?limit=`) |
+| POST | `/v1/admin/keys/{id}/revoke` | Revoke API key |
 
 ## Environment Variables
 
@@ -314,7 +375,7 @@ app/
   config.py            # Settings from env vars
   auth.py              # DB-backed API key auth (SHA-256, constant-time compare)
   rate_limit.py        # Per-agent sliding window rate limiter
-  cli.py               # Bootstrap CLI (create tenant, generate keys)
+  cli.py               # CLI: bootstrap, create-key, cleanup (retention)
   db.py                # Engine, session, init_db
   models.py            # SQLAlchemy models (9 tables)
   schemas.py           # Pydantic request/response models
@@ -334,7 +395,7 @@ scripts/
   start.sh             # Startup script (migrate + uvicorn)
   start-worker.sh      # Worker startup script (migrate + worker loop)
 alembic/               # Migration config and versions
-tests/                 # pytest suite (113 tests)
+tests/                 # pytest suite (140 tests)
 .github/workflows/
   ci.yml               # GitHub Actions CI (Postgres, migrations, pytest)
 Dockerfile             # Production container image
@@ -476,6 +537,19 @@ Baseline score is 50. Events shift it up or down by fixed weights:
 Score is clamped to [0, 100]. Tiers: high (>=80), medium (>=60), watch (>=40), restricted (<40).
 
 ## Upgrade Notes
+
+### v0.7 → v0.8
+
+No database migrations. Adds:
+- **API key management endpoints** (`POST/GET/revoke /v1/admin/keys`) — create, list, and revoke API keys via the admin API instead of only CLI.
+- **Webhook replay** (`POST /v1/admin/policy/webhooks/{id}/replay`) — requeue failed/dead jobs for re-delivery.
+- **Queue stats** (`GET /v1/admin/policy/webhooks/{id}/stats`) — counts by state + recent success rate.
+- **Retention cleanup CLI** (`python -m app.cli cleanup --days N`) — delete old deliveries and terminal jobs.
+- 27 new tests (140 total).
+
+### v0.5 → v0.7
+
+Run `make migrate` for new `webhook_jobs` table. Adds async webhook delivery via DB-backed job queue + worker process. Set `WEBHOOK_ASYNC=true` and run `python -m app.worker` separately.
 
 ### v0.4 → v0.5
 

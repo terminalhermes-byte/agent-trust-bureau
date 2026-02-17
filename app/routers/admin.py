@@ -12,15 +12,22 @@ from sqlalchemy.orm import Session
 
 from app.admin_store import (
     create_agent_override,
+    create_api_key_for_tenant,
     create_webhook,
     delete_agent_override,
+    get_last_failed_job,
     get_policy_config,
     get_webhook,
+    get_webhook_job,
+    get_webhook_stats,
     list_agent_overrides,
+    list_api_keys,
     list_webhook_deliveries,
     list_webhook_jobs,
     list_webhooks,
     patch_webhook,
+    replay_webhook_job,
+    revoke_api_key,
     upsert_policy_config,
 )
 from app.auth import AuthContext, require_api_key_strict
@@ -29,6 +36,9 @@ from app.schemas import (
     AgentOverrideCreate,
     AgentOverrideListResponse,
     AgentOverrideOut,
+    ApiKeyCreate,
+    ApiKeyListResponse,
+    ApiKeyOut,
     PolicyConfigOut,
     PolicyConfigUpdate,
     WebhookCreate,
@@ -39,6 +49,9 @@ from app.schemas import (
     WebhookListResponse,
     WebhookOut,
     WebhookPatch,
+    WebhookReplayRequest,
+    WebhookReplayResponse,
+    WebhookStatsOut,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -311,3 +324,146 @@ def get_jobs(
         for j in jobs
     ]
     return WebhookJobListResponse(count=len(items), jobs=items)
+
+
+# ---------------------------------------------------------------------------
+# Webhook Stats: GET
+# ---------------------------------------------------------------------------
+
+@router.get("/policy/webhooks/{webhook_id}/stats", response_model=WebhookStatsOut)
+def get_stats(
+    webhook_id: int,
+    auth: AuthContext = Depends(require_api_key_strict),
+    db: Session = Depends(get_db),
+) -> WebhookStatsOut:
+    wh = get_webhook(db, webhook_id, auth.tenant_id)
+    if wh is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
+    stats = get_webhook_stats(db, webhook_id, auth.tenant_id)
+    return WebhookStatsOut(webhook_id=webhook_id, **stats)
+
+
+# ---------------------------------------------------------------------------
+# Webhook Replay: POST
+# ---------------------------------------------------------------------------
+
+@router.post("/policy/webhooks/{webhook_id}/replay", response_model=WebhookReplayResponse)
+def replay(
+    webhook_id: int,
+    body: WebhookReplayRequest,
+    auth: AuthContext = Depends(require_api_key_strict),
+    db: Session = Depends(get_db),
+) -> WebhookReplayResponse:
+    # Verify webhook belongs to tenant
+    wh = get_webhook(db, webhook_id, auth.tenant_id)
+    if wh is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
+
+    replayed_jobs: list[WebhookJobOut] = []
+
+    if body.job_id is not None:
+        job = get_webhook_job(db, body.job_id, auth.tenant_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        if job.webhook_id != webhook_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Job does not belong to this webhook")
+        if job.state not in ("failed", "dead"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Job is in state '{job.state}'; only failed/dead jobs can be replayed",
+            )
+        job = replay_webhook_job(db, job)
+        replayed_jobs.append(_job_to_out(job))
+
+    elif body.last_failed:
+        job = get_last_failed_job(db, webhook_id, auth.tenant_id)
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No failed/dead jobs found for this webhook",
+            )
+        job = replay_webhook_job(db, job)
+        replayed_jobs.append(_job_to_out(job))
+
+    return WebhookReplayResponse(replayed=len(replayed_jobs), jobs=replayed_jobs)
+
+
+def _job_to_out(j) -> WebhookJobOut:
+    return WebhookJobOut(
+        id=j.id,
+        webhook_id=j.webhook_id,
+        tenant_id=j.tenant_id,
+        agent_id=j.agent_id,
+        state=j.state,
+        attempts=j.attempts,
+        max_attempts=j.max_attempts,
+        last_error=j.last_error,
+        scheduled_at=j.scheduled_at,
+        started_at=j.started_at,
+        completed_at=j.completed_at,
+        created_at=j.created_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# API Keys: POST / GET / POST (revoke)
+# ---------------------------------------------------------------------------
+
+@router.post("/keys", response_model=ApiKeyOut, status_code=status.HTTP_201_CREATED)
+def create_key(
+    body: ApiKeyCreate,
+    auth: AuthContext = Depends(require_api_key_strict),
+    db: Session = Depends(get_db),
+) -> ApiKeyOut:
+    key_row, raw_key = create_api_key_for_tenant(db, auth.tenant_id, name=body.name)
+    return ApiKeyOut(
+        id=key_row.id,
+        name=key_row.name,
+        key_prefix=key_row.key_prefix,
+        is_active=key_row.is_active,
+        created_at=key_row.created_at,
+        revoked_at=key_row.revoked_at,
+        raw_key=raw_key,
+    )
+
+
+@router.get("/keys", response_model=ApiKeyListResponse)
+def get_keys(
+    limit: int = Query(default=50, ge=1, le=500),
+    auth: AuthContext = Depends(require_api_key_strict),
+    db: Session = Depends(get_db),
+) -> ApiKeyListResponse:
+    keys = list_api_keys(db, auth.tenant_id, limit=limit)
+    items = [
+        ApiKeyOut(
+            id=k.id,
+            name=k.name,
+            key_prefix=k.key_prefix,
+            is_active=k.is_active,
+            created_at=k.created_at,
+            revoked_at=k.revoked_at,
+            raw_key=None,
+        )
+        for k in keys
+    ]
+    return ApiKeyListResponse(count=len(items), keys=items)
+
+
+@router.post("/keys/{key_id}/revoke", response_model=ApiKeyOut)
+def revoke_key(
+    key_id: int,
+    auth: AuthContext = Depends(require_api_key_strict),
+    db: Session = Depends(get_db),
+) -> ApiKeyOut:
+    key = revoke_api_key(db, key_id, auth.tenant_id)
+    if key is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    return ApiKeyOut(
+        id=key.id,
+        name=key.name,
+        key_prefix=key.key_prefix,
+        is_active=key.is_active,
+        created_at=key.created_at,
+        revoked_at=key.revoked_at,
+        raw_key=None,
+    )
