@@ -18,3 +18,9 @@ def test_root_json_exposes_console_link(client: TestClient) -> None:
     assert body["name"] == "Agent Trust Bureau"
     assert body["docs"] == "/docs"
     assert body["console"] == "/console"
+
+
+def test_docs_content_length_matches_body(client: TestClient) -> None:
+    response = client.get("/docs")
+    assert response.status_code == 200
+    assert int(response.headers["content-length"]) == len(response.content)

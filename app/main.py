@@ -536,6 +536,7 @@ def custom_swagger_ui_html() -> HTMLResponse:
 </style>
 """
     response.body = response.body.replace(b"</head>", style + b"</head>")
+    response.headers["content-length"] = str(len(response.body))
     return response
 
 
