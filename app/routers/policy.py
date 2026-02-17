@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, require_api_key
+from app.config import settings
 from app.db import get_db
 from app.schemas import PolicyDecisionResponse, ThresholdsOut
 from app.services.policy import evaluate_policy
 from app.services.scoring import calculate_trust_score
-from app.services.webhook import send_webhook
+from app.services.webhook import enqueue_webhook, send_webhook
 from app.store import list_agent_events, save_score_snapshot
 
 router = APIRouter(prefix="/policy", tags=["policy"])
@@ -28,8 +29,13 @@ def get_policy_decision(
     # 2. Evaluate against policy thresholds
     decision = evaluate_policy(db, auth.tenant_id, agent_id, result.score)
 
-    # 3. Fire webhook (best-effort, non-blocking for the response)
-    send_webhook(db, auth.tenant_id, agent_id, decision)
+    # 3. Fire webhook
+    if settings.webhook_async:
+        # Async mode: enqueue for background worker delivery
+        enqueue_webhook(db, auth.tenant_id, agent_id, decision)
+    else:
+        # Sync mode: deliver inline (best-effort, won't fail the response)
+        send_webhook(db, auth.tenant_id, agent_id, decision)
 
     return PolicyDecisionResponse(
         agent_id=agent_id,

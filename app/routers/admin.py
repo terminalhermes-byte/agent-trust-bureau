@@ -15,7 +15,10 @@ from app.admin_store import (
     create_webhook,
     delete_agent_override,
     get_policy_config,
+    get_webhook,
     list_agent_overrides,
+    list_webhook_deliveries,
+    list_webhook_jobs,
     list_webhooks,
     patch_webhook,
     upsert_policy_config,
@@ -29,6 +32,10 @@ from app.schemas import (
     PolicyConfigOut,
     PolicyConfigUpdate,
     WebhookCreate,
+    WebhookDeliveryListResponse,
+    WebhookDeliveryOut,
+    WebhookJobListResponse,
+    WebhookJobOut,
     WebhookListResponse,
     WebhookOut,
     WebhookPatch,
@@ -236,3 +243,71 @@ def get_webhooks(
         for wh in webhooks
     ]
     return WebhookListResponse(count=len(items), webhooks=items)
+
+
+# ---------------------------------------------------------------------------
+# Webhook Deliveries: GET (list)
+# ---------------------------------------------------------------------------
+
+@router.get("/policy/webhooks/{webhook_id}/deliveries", response_model=WebhookDeliveryListResponse)
+def get_deliveries(
+    webhook_id: int,
+    limit: int = Query(default=50, ge=1, le=500),
+    auth: AuthContext = Depends(require_api_key_strict),
+    db: Session = Depends(get_db),
+) -> WebhookDeliveryListResponse:
+    # Verify webhook exists and belongs to this tenant
+    wh = get_webhook(db, webhook_id, auth.tenant_id)
+    if wh is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
+    deliveries = list_webhook_deliveries(db, webhook_id, auth.tenant_id, limit=limit)
+    items = [
+        WebhookDeliveryOut(
+            id=d.id,
+            webhook_id=d.webhook_id,
+            attempt=d.attempt,
+            status_code=d.status_code,
+            error=d.error,
+            success=d.success,
+            created_at=d.created_at,
+        )
+        for d in deliveries
+    ]
+    return WebhookDeliveryListResponse(count=len(items), deliveries=items)
+
+
+# ---------------------------------------------------------------------------
+# Webhook Jobs: GET (list)
+# ---------------------------------------------------------------------------
+
+@router.get("/policy/webhooks/{webhook_id}/jobs", response_model=WebhookJobListResponse)
+def get_jobs(
+    webhook_id: int,
+    limit: int = Query(default=50, ge=1, le=500),
+    state: str | None = Query(default=None),
+    auth: AuthContext = Depends(require_api_key_strict),
+    db: Session = Depends(get_db),
+) -> WebhookJobListResponse:
+    # Verify webhook exists and belongs to this tenant
+    wh = get_webhook(db, webhook_id, auth.tenant_id)
+    if wh is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
+    jobs = list_webhook_jobs(db, webhook_id, auth.tenant_id, limit=limit, state=state)
+    items = [
+        WebhookJobOut(
+            id=j.id,
+            webhook_id=j.webhook_id,
+            tenant_id=j.tenant_id,
+            agent_id=j.agent_id,
+            state=j.state,
+            attempts=j.attempts,
+            max_attempts=j.max_attempts,
+            last_error=j.last_error,
+            scheduled_at=j.scheduled_at,
+            started_at=j.started_at,
+            completed_at=j.completed_at,
+            created_at=j.created_at,
+        )
+        for j in jobs
+    ]
+    return WebhookJobListResponse(count=len(items), jobs=items)

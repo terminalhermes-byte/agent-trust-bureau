@@ -9,6 +9,7 @@ primary_region = "iad"
   REQUIRE_AUTH = "true"
   PORT = "8010"
   SCORE_RATE_LIMIT_PER_MINUTE = "30"
+  WEBHOOK_ASYNC = "true"
 
 [http_service]
   internal_port = 8010
@@ -24,3 +25,15 @@ primary_region = "iad"
       grace_period = "10s"
       method = "GET"
       path = "/health"
+
+# ---------------------------------------------------------------------------
+# Webhook worker — run as a separate Fly Machine (process group):
+#   fly machine run . --config fly.toml \
+#     -e WEBHOOK_WORKER_POLL_SECONDS=2 \
+#     --entrypoint scripts/start-worker.sh
+#
+# Or use Fly's [processes] feature:
+#   [processes]
+#     web = "scripts/start.sh"
+#     worker = "scripts/start-worker.sh"
+# ---------------------------------------------------------------------------

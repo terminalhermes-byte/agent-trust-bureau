@@ -158,3 +158,42 @@ class WebhookOut(BaseModel):
 class WebhookListResponse(BaseModel):
     count: int
     webhooks: list[WebhookOut]
+
+
+class WebhookDeliveryOut(BaseModel):
+    id: int
+    webhook_id: int
+    attempt: int
+    status_code: Optional[int]
+    error: Optional[str]
+    success: bool
+    created_at: datetime
+
+
+class WebhookDeliveryListResponse(BaseModel):
+    count: int
+    deliveries: list[WebhookDeliveryOut]
+
+
+# ---------------------------------------------------------------------------
+# Admin: Webhook Jobs (async queue visibility)
+# ---------------------------------------------------------------------------
+
+class WebhookJobOut(BaseModel):
+    id: int
+    webhook_id: int
+    tenant_id: int
+    agent_id: str
+    state: str
+    attempts: int
+    max_attempts: int
+    last_error: Optional[str]
+    scheduled_at: datetime
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    created_at: datetime
+
+
+class WebhookJobListResponse(BaseModel):
+    count: int
+    jobs: list[WebhookJobOut]

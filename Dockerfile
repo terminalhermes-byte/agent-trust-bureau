@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -e .
 
 # Make startup script executable
 RUN chmod +x scripts/start.sh
+RUN chmod +x scripts/start-worker.sh || true
 
 EXPOSE 8010
 
