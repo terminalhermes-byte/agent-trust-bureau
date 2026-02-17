@@ -17,7 +17,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title=settings.app_name, lifespan=lifespan)
+APP_VERSION = "1.0.0"
+
+app = FastAPI(title=settings.app_name, version=APP_VERSION, lifespan=lifespan)
 app.include_router(events.router, prefix=settings.api_prefix)
 app.include_router(trust.router, prefix=settings.api_prefix)
 app.include_router(policy.router, prefix=settings.api_prefix)
@@ -28,6 +30,7 @@ app.include_router(admin.router, prefix=settings.api_prefix)
 def root() -> dict[str, str]:
     return {
         "name": settings.app_name,
+        "version": APP_VERSION,
         "status": "ok",
         "docs": "/docs",
     }
@@ -35,4 +38,4 @@ def root() -> dict[str, str]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "environment": settings.environment}
+    return {"status": "ok", "version": APP_VERSION, "environment": settings.environment}
