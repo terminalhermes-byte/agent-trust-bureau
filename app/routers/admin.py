@@ -293,6 +293,9 @@ def get_deliveries(
 # Webhook Jobs: GET (list)
 # ---------------------------------------------------------------------------
 
+_VALID_JOB_STATES = {"pending", "in_progress", "failed", "dead", "completed"}
+
+
 @router.get("/policy/webhooks/{webhook_id}/jobs", response_model=WebhookJobListResponse)
 def get_jobs(
     webhook_id: int,
@@ -301,6 +304,11 @@ def get_jobs(
     auth: AuthContext = Depends(require_api_key_strict),
     db: Session = Depends(get_db),
 ) -> WebhookJobListResponse:
+    if state is not None and state not in _VALID_JOB_STATES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid state '{state}'. Must be one of: {', '.join(sorted(_VALID_JOB_STATES))}",
+        )
     # Verify webhook exists and belongs to this tenant
     wh = get_webhook(db, webhook_id, auth.tenant_id)
     if wh is None:

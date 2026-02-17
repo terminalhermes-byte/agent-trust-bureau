@@ -163,15 +163,18 @@ def claim_pending_job(db: Session, *, batch_size: int = 1) -> WebhookJob | None:
 def claim_pending_job_sqlite(db: Session) -> WebhookJob | None:
     """SQLite-compatible version of claim_pending_job (no FOR UPDATE SKIP LOCKED).
 
-    Used in tests where SQLite is the backend.
+    Used in tests where SQLite is the backend.  Uses naive UTC datetimes
+    because SQLite does not store timezone info and comparisons between
+    offset-aware and offset-naive datetimes raise ``TypeError``.
     """
-    now = datetime.now(timezone.utc)
+    now_aware = datetime.now(timezone.utc)
+    now_naive = now_aware.replace(tzinfo=None)
 
     stmt = (
         select(WebhookJob)
         .where(
             WebhookJob.state == "pending",
-            WebhookJob.scheduled_at <= now,
+            WebhookJob.scheduled_at <= now_naive,
         )
         .order_by(WebhookJob.scheduled_at.asc())
         .limit(1)
@@ -182,7 +185,7 @@ def claim_pending_job_sqlite(db: Session) -> WebhookJob | None:
         return None
 
     job.state = "in_progress"
-    job.started_at = now
+    job.started_at = now_aware
     db.commit()
     db.refresh(job)
     return job
@@ -220,6 +223,7 @@ def process_webhook_job(db: Session, job: WebhookJob) -> bool:
 
     attempt_num = job.attempts + 1
     now = datetime.now(timezone.utc)
+    error_msg = "Unknown error"  # safe default — prevents NameError on unexpected exceptions
 
     try:
         client = httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS)
@@ -249,7 +253,7 @@ def process_webhook_job(db: Session, job: WebhookJob) -> bool:
             status_code=resp.status_code, success=False,
         )
 
-    except httpx.HTTPError as exc:
+    except Exception as exc:
         error_msg = str(exc)
         logger.warning("Job %d attempt %d failed: %s", job.id, attempt_num, exc)
         _record_delivery(
@@ -281,6 +285,9 @@ def recover_stale_jobs(db: Session) -> int:
     This handles worker crashes — if a job has been ``in_progress`` for
     longer than STALE_JOB_TIMEOUT_SECONDS, it is assumed the worker died.
 
+    The stale attempt counts against the job's retry budget (attempts is
+    incremented) to prevent infinite retry loops.
+
     Returns the number of recovered jobs.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=STALE_JOB_TIMEOUT_SECONDS)
@@ -294,7 +301,9 @@ def recover_stale_jobs(db: Session) -> int:
         .values(
             state="failed",
             last_error="Worker timeout — recovered by stale job sweeper",
+            attempts=WebhookJob.attempts + 1,
         )
+        .execution_options(synchronize_session="fetch")
     )
     result = db.execute(stmt)
     db.commit()
@@ -319,6 +328,7 @@ def requeue_failed_jobs(db: Session) -> int:
             WebhookJob.attempts < WebhookJob.max_attempts,
         )
         .values(state="pending")
+        .execution_options(synchronize_session="fetch")
     )
     result = db.execute(stmt)
     db.commit()

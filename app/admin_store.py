@@ -271,7 +271,11 @@ def replay_webhook_job(db: Session, job: WebhookJob) -> WebhookJob:
     """Reset a failed/dead job back to pending for re-delivery.
 
     Preserves original payload and audit trail (attempts counter keeps going).
+    If the job has exhausted its max_attempts, we grant one additional attempt
+    so the replayed job is not immediately re-marked as dead.
     """
+    if job.attempts >= job.max_attempts:
+        job.max_attempts = job.attempts + 1
     job.state = "pending"
     job.scheduled_at = datetime.now(timezone.utc)
     job.started_at = None
